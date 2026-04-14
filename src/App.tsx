@@ -1481,85 +1481,71 @@ export default function App() {
                       Defina quem são os administradores do sistema e gerencie o status de pagamento de todos os participantes.
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="p-0">
-                    <div className="hidden md:block overflow-x-auto">
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-slate-50 border-b">
-                            <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">Usuário</th>
-                            <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">E-mail</th>
-                            <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase text-center">Admin</th>
-                            <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase text-center">Pagamento</th>
-                            <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase text-right">Ações</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y">
-                          {state.users.map(user => (
-                            <tr key={user.id} className="hover:bg-slate-50 transition-colors">
-                              <td className="px-6 py-4">
-                                <div className="flex items-center gap-3">
-                                  <Avatar className={user.isAdmin ? "border-2 border-yellow-400" : ""}>
-                                    <AvatarImage src={user.photoUrl} />
-                                    <AvatarFallback>{user.name[0]}</AvatarFallback>
-                                  </Avatar>
-                                  <span className="font-bold text-sm">{user.name}</span>
-                                </div>
-                              </td>
-                              <td className="px-6 py-4 text-sm text-slate-500">{user.email}</td>
-                              <td className="px-6 py-4 text-center">
-                                <Badge variant={user.isAdmin ? "warning" : "outline"} className="gap-1">
-                                  {user.isAdmin ? <Shield className="w-3 h-3" /> : null}
-                                  {user.isAdmin ? 'Admin' : 'Membro'}
-                                </Badge>
-                              </td>
-                              <td className="px-6 py-4 text-center">
-                                <Badge variant={user.isPaid ? "success" : "destructive"}>
-                                  {user.isPaid ? 'Pago' : 'Pendente'}
-                                </Badge>
-                              </td>
-                              <td className="px-6 py-4 text-right">
-                                <div className="flex justify-end gap-2">
-                                  {user.id !== currentUser?.id && (
-                                    <Button 
-                                      variant="destructive"
-                                      size="sm"
-                                      onClick={() => {
-                                        if (confirm(`Tem certeza que deseja banir ${user.name}?`)) {
-                                          deleteUser(user.id);
-                                          toast.success(`${user.name} foi banido.`);
-                                        }
-                                      }}
-                                    >
-                                      Banir
-                                    </Button>
-                                  )}
-                                  {user.id !== currentUser?.id && (
-                                    <Button 
-                                      variant="outline" 
-                                      size="sm"
-                                      className={user.isAdmin ? "text-red-600 border-red-100 bg-red-50 hover:bg-red-100" : "text-yellow-600 border-yellow-100 bg-yellow-50 hover:bg-yellow-100"}
-                                      onClick={() => {
-                                        toggleAdminStatus(user.id);
-                                        toast.success(`${user.name} agora é ${!user.isAdmin ? 'Administrador' : 'Participante'}`);
-                                      }}
-                                    >
-                                      {user.isAdmin ? 'Remover Admin' : 'Tornar Admin'}
-                                    </Button>
-                                  )}
-                                  <Button 
-                                    variant={user.isPaid ? "outline" : "default"} 
-                                    size="sm"
-                                    onClick={() => togglePaymentStatus(user.id)}
-                                  >
-                                    {user.isPaid ? 'Estornar' : 'Confirmar Pagamento'}
-                                  </Button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                  <CardContent className="p-4 space-y-3">
+                    {state.users.map(user => (
+                      <div key={user.id} className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-lg border bg-slate-50 hover:bg-slate-100 transition-colors">
+                        {/* Avatar + Nome + Email */}
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <Avatar className={`shrink-0 ${user.isAdmin ? 'border-2 border-yellow-400' : ''}`}>
+                            <AvatarImage src={user.photoUrl} />
+                            <AvatarFallback>{user.name[0]}</AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-sm text-slate-800 truncate">{user.name}</p>
+                            <p className="text-xs text-slate-500 truncate">{user.email}</p>
+                          </div>
+                        </div>
+                        {/* Badges */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Badge variant={user.isAdmin ? "warning" : "outline"} className="gap-1">
+                            {user.isAdmin ? <Shield className="w-3 h-3" /> : null}
+                            {user.isAdmin ? 'Admin' : 'Membro'}
+                          </Badge>
+                          <Badge variant={user.isPaid ? "success" : "destructive"}>
+                            {user.isPaid ? 'Pago' : 'Pendente'}
+                          </Badge>
+                        </div>
+                        {/* Ações */}
+                        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                          {user.id !== currentUser?.id && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => {
+                                if (confirm(`Tem certeza que deseja banir ${user.name}?`)) {
+                                  deleteUser(user.id);
+                                  toast.success(`${user.name} foi banido.`);
+                                }
+                              }}
+                            >
+                              Banir
+                            </Button>
+                          )}
+                          {user.id !== currentUser?.id && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className={user.isAdmin
+                                ? "text-red-600 border-red-200 bg-red-50 hover:bg-red-100"
+                                : "text-yellow-600 border-yellow-200 bg-yellow-50 hover:bg-yellow-100"}
+                              onClick={() => {
+                                toggleAdminStatus(user.id);
+                                toast.success(`${user.name} agora é ${!user.isAdmin ? 'Administrador' : 'Participante'}`);
+                              }}
+                            >
+                              {user.isAdmin ? 'Remover Admin' : 'Tornar Admin'}
+                            </Button>
+                          )}
+                          <Button
+                            variant={user.isPaid ? "outline" : "default"}
+                            size="sm"
+                            onClick={() => togglePaymentStatus(user.id)}
+                          >
+                            {user.isPaid ? 'Estornar' : 'Confirmar Pgto'}
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
                   </CardContent>
                 </Card>
               </TabsContent>

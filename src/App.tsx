@@ -240,7 +240,7 @@ export default function App() {
   };
 
   const getPointsRuleLabel = (bet: Bet, match: Match) => {
-    const points = calculatePoints(bet, match);
+    const points = calculatePoints(bet, match, state.settings.betsLocked);
 
     if (points === SCORING_RULES.EXACT_SCORE) return 'Placar exato';
     if (points === SCORING_RULES.DRAW) return 'Empate';
@@ -1163,7 +1163,7 @@ export default function App() {
                                                   {isFinished && (
                                                     <div className="flex items-center gap-2">
                                                       <Badge variant="success" className="text-[10px]">
-                                                        +{calculatePoints(bet, match)} pts
+                                                        +{calculatePoints(bet, match, state.settings.betsLocked)} pts
                                                       </Badge>
                                                       <Badge variant="outline" className="text-[10px]">
                                                         {getPointsRuleLabel(bet, match)}

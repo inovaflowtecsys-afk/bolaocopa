@@ -406,7 +406,7 @@ export function useAppState() {
       if (bet.matchId !== matchId) return bet;
       return {
         ...bet,
-        pointsEarned: calculatePoints(bet, computedMatch),
+        pointsEarned: calculatePoints(bet, computedMatch, state.settings.betsLocked),
       };
     });
 

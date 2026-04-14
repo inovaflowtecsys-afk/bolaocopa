@@ -21,6 +21,8 @@ import { isSupabaseConfigured, supabaseConfigError } from './lib/supabase';
 import { supabase } from './lib/supabase';
 
 export default function App() {
+  const appInfoLabel = `Inovaflowtec v${__APP_VERSION__} - ${__BUILD_DATE__}`;
+
   const { state, login, logout, registerUser, placeBet, updateMatchResult, togglePaymentStatus, toggleAdminStatus, toggleBetsLock, addMatch, updateMatch, deleteMatch, deleteUser, setEntryFee, setYear, setLogoUrl, setPrizeSettings, resetState } = useAppState();
   const supabaseReady = isSupabaseConfigured;
   const [activeTab, setActiveTab] = React.useState('matches');
@@ -439,7 +441,7 @@ export default function App() {
             </Button>
             <div className="flex justify-center pt-2">
               <Button variant="link" size="sm" className="text-[10px] text-slate-400" onClick={resetState}>
-                Recarregar dados
+                {appInfoLabel}
               </Button>
             </div>
           </CardContent>

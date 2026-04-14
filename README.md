@@ -32,3 +32,17 @@ O arquivo `supabase/seed.sql` insere partidas iniciais para o bolao.
 - O primeiro usuário cadastrado vira administrador e já entra como pago.
 - A exclusão de perfil na tela remove o registro da tabela `public.users`; para apagar também o usuário do Auth é necessário usar uma função administrativa ou o painel do Supabase.
 - Sem credenciais reais no `.env.local`, login e cadastro ficam bloqueados por segurança.
+
+## Deploy no GitHub Pages
+
+O projeto possui workflow em `.github/workflows/deploy-pages.yml` para deploy automático no Pages.
+
+1. No repositório, configure os secrets:
+	- `VITE_SUPABASE_URL`
+	- `VITE_SUPABASE_ANON_KEY`
+2. Em Settings > Pages, selecione Source: GitHub Actions.
+3. Faça push na branch `main`.
+4. O workflow fará build e publicação automaticamente.
+
+Observação:
+- A configuração do Vite ajusta o `base` automaticamente quando o build roda no GitHub Actions para funcionar no caminho do repositório.

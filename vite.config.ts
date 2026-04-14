@@ -12,8 +12,13 @@ export default defineConfig(({mode}) => {
   const repository = process.env.GITHUB_REPOSITORY;
   const isGitHubPagesBuild = process.env.GITHUB_ACTIONS === 'true' && Boolean(repository);
   const repoName = repository?.split('/')[1] ?? '';
+  const configuredBasePath = process.env.BASE_PATH;
 
-  const base = isGitHubPagesBuild && repoName ? `/${repoName}/` : '/';
+  const base = configuredBasePath
+    ? (configuredBasePath.endsWith('/') ? configuredBasePath : `${configuredBasePath}/`)
+    : isGitHubPagesBuild && repoName
+      ? `/${repoName}/`
+      : '/';
 
   return {
     base,

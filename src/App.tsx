@@ -15,9 +15,10 @@ import { toast } from 'sonner';
 import { Trophy, Users, DollarSign, Calendar, Shield, LogOut, UserPlus, Filter, Lock, Unlock, Pencil, Trash2, PieChart as PieChartIcon, Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
-import { GROUPS, COUNTRIES } from './constants';
-import { Match, User } from './types';
+import { GROUPS, COUNTRIES, SCORING_RULES, calculatePoints } from './constants';
+import { Match, User, Bet } from './types';
 import { isSupabaseConfigured, supabaseConfigError } from './lib/supabase';
+import { supabase } from './lib/supabase';
 
 export default function App() {
   const { state, login, logout, registerUser, placeBet, updateMatchResult, togglePaymentStatus, toggleAdminStatus, toggleBetsLock, addMatch, updateMatch, deleteMatch, deleteUser, setEntryFee, setYear, setLogoUrl, setPrizeSettings, resetState } = useAppState();
@@ -29,6 +30,11 @@ export default function App() {
   const [betScores, setBetScores] = React.useState({ home: 0, away: 0 });
   const [loginForm, setLoginForm] = React.useState({ email: '', password: '' });
   const [showPassword, setShowPassword] = React.useState(false);
+  const [isForgotPassword, setIsForgotPassword] = React.useState(false);
+  const [isResetPassword, setIsResetPassword] = React.useState(false);
+  const [forgotEmail, setForgotEmail] = React.useState('');
+  const [resetPasswordForm, setResetPasswordForm] = React.useState({ password: '', confirmPassword: '' });
+  const [resetPasswordError, setResetPasswordError] = React.useState<string | null>(null);
   const [base64Photo, setBase64Photo] = React.useState<string>('');
   const [adminMatchFilter, setAdminMatchFilter] = React.useState('all');
   const [viewingBetsMatch, setViewingBetsMatch] = React.useState<Match | null>(null);
@@ -56,6 +62,27 @@ export default function App() {
       setActiveTab('matches');
     }
   }, [currentUser, activeTab]);
+
+  React.useEffect(() => {
+    const hasRecoveryHash = window.location.hash.includes('type=recovery');
+    if (hasRecoveryHash) {
+      setIsResetPassword(true);
+      setIsRegistering(false);
+      setIsForgotPassword(false);
+    }
+
+    const { data: listener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsResetPassword(true);
+        setIsRegistering(false);
+        setIsForgotPassword(false);
+      }
+    });
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+  }, []);
 
   const filteredMatches = state.matches
     .filter(m => groupFilter === 'all' || m.group === groupFilter)
@@ -157,6 +184,69 @@ export default function App() {
     }
   };
 
+  const handleForgotPassword = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+
+    if (!supabaseReady) {
+      toast.error('Configure o Supabase antes de continuar.');
+      return;
+    }
+
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+      redirectTo: `${window.location.origin}${window.location.pathname}`,
+    });
+
+    if (error) {
+      toast.error(`Erro ao enviar e-mail: ${error.message}`);
+      return;
+    }
+
+    toast.success('Enviamos o link de redefinição para seu e-mail.');
+  };
+
+  const handleResetPassword = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setResetPasswordError(null);
+
+    if (resetPasswordForm.password.length < 6) {
+      setResetPasswordError('A nova senha deve ter pelo menos 6 caracteres.');
+      return;
+    }
+
+    if (resetPasswordForm.password !== resetPasswordForm.confirmPassword) {
+      setResetPasswordError('As senhas não coincidem.');
+      return;
+    }
+
+    const { error } = await supabase.auth.updateUser({
+      password: resetPasswordForm.password,
+    });
+
+    if (error) {
+      setResetPasswordError(error.message);
+      return;
+    }
+
+    await supabase.auth.signOut();
+    window.history.replaceState({}, document.title, window.location.pathname);
+
+    setResetPasswordForm({ password: '', confirmPassword: '' });
+    setIsResetPassword(false);
+    setIsForgotPassword(false);
+    setIsRegistering(false);
+    toast.success('Senha redefinida com sucesso. Faça login com a nova senha.');
+  };
+
+  const getPointsRuleLabel = (bet: Bet, match: Match) => {
+    const points = calculatePoints(bet, match);
+
+    if (points === SCORING_RULES.EXACT_SCORE) return 'Placar exato';
+    if (points === SCORING_RULES.DRAW) return 'Empate';
+    if (points === SCORING_RULES.WINNER) return 'Vencedor';
+    if (points === SCORING_RULES.INVERTED) return 'Placar invertido';
+    return 'Sem pontuação';
+  };
+
   const handleAddMatch = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMatch.homeTeam || !newMatch.awayTeam || !newMatch.date) {
@@ -247,7 +337,7 @@ export default function App() {
 
   const prizes = calculatePrizeValues();
 
-  if (!currentUser && !isRegistering) {
+  if (!currentUser && !isRegistering && !isForgotPassword && !isResetPassword) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans relative overflow-hidden">
         {/* Background Image with Transparency */}
@@ -281,7 +371,7 @@ export default function App() {
                 <p className="mt-1">Depois disso, execute o arquivo supabase/schema.sql no SQL Editor do projeto.</p>
               </div>
             )}
-            <form onSubmit={handleLogin} className="space-y-4">
+            <form onSubmit={handleLogin} className="space-y-5">
               {loginError && (
                 <div className="p-3 rounded-lg bg-red-50 border border-red-100 text-red-600 text-xs font-medium animate-in fade-in slide-in-from-top-1">
                   {loginError}
@@ -317,7 +407,23 @@ export default function App() {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-              <Button type="submit" className="w-full h-12 bg-slate-900 hover:bg-slate-800" disabled={!supabaseReady}>Entrar</Button>
+              <div className="pt-1">
+                <Button type="submit" className="w-full h-12 bg-slate-900 hover:bg-slate-800" disabled={!supabaseReady}>Entrar</Button>
+              </div>
+              <div className="flex justify-end pt-1">
+                <Button
+                  type="button"
+                  variant="link"
+                  className="h-auto px-0 text-xs text-slate-500"
+                  onClick={() => {
+                    setIsForgotPassword(true);
+                    setIsRegistering(false);
+                    setIsResetPassword(false);
+                  }}
+                >
+                  Esqueci minha senha
+                </Button>
+              </div>
             </form>
             
             <div className="relative">
@@ -337,6 +443,111 @@ export default function App() {
               </Button>
             </div>
           </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (isForgotPassword) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans">
+        <Card className="w-full max-w-md border-none shadow-xl">
+          <CardHeader>
+            <CardTitle className="text-2xl font-bold">Esqueci minha senha</CardTitle>
+            <CardDescription>Digite seu e-mail para receber o link de redefinição.</CardDescription>
+          </CardHeader>
+          <form onSubmit={handleForgotPassword}>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="forgot-email">E-mail</Label>
+                <Input
+                  id="forgot-email"
+                  type="email"
+                  placeholder="seu@email.com"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  required
+                />
+              </div>
+            </CardContent>
+            <CardFooter className="flex gap-2 mt-2 border-t border-slate-100 pt-4">
+              <Button
+                type="button"
+                variant="ghost"
+                className="flex-1"
+                onClick={() => {
+                  setIsForgotPassword(false);
+                  setIsRegistering(false);
+                  setIsResetPassword(false);
+                }}
+              >
+                Voltar ao login
+              </Button>
+              <Button type="submit" className="flex-1 bg-slate-900 hover:bg-slate-800" disabled={!supabaseReady}>
+                Enviar link
+              </Button>
+            </CardFooter>
+          </form>
+        </Card>
+      </div>
+    );
+  }
+
+  if (isResetPassword) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans">
+        <Card className="w-full max-w-md border-none shadow-xl">
+          <CardHeader>
+            <CardTitle className="text-2xl font-bold">Redefinir senha</CardTitle>
+            <CardDescription>Cadastre sua nova senha para voltar ao acesso normal.</CardDescription>
+          </CardHeader>
+          <form onSubmit={handleResetPassword}>
+            <CardContent className="space-y-4">
+              {resetPasswordError && (
+                <div className="p-3 rounded-lg bg-red-50 border border-red-100 text-red-600 text-xs font-medium">
+                  {resetPasswordError}
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label htmlFor="new-password">Nova senha</Label>
+                <Input
+                  id="new-password"
+                  type="password"
+                  placeholder="Digite a nova senha"
+                  value={resetPasswordForm.password}
+                  onChange={(e) => setResetPasswordForm(prev => ({ ...prev, password: e.target.value }))}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="confirm-password">Confirmar nova senha</Label>
+                <Input
+                  id="confirm-password"
+                  type="password"
+                  placeholder="Confirme a nova senha"
+                  value={resetPasswordForm.confirmPassword}
+                  onChange={(e) => setResetPasswordForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                  required
+                />
+              </div>
+            </CardContent>
+            <CardFooter className="flex gap-2 mt-2 border-t border-slate-100 pt-4">
+              <Button
+                type="button"
+                variant="ghost"
+                className="flex-1"
+                onClick={() => {
+                  setIsResetPassword(false);
+                  setResetPasswordForm({ password: '', confirmPassword: '' });
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" className="flex-1 bg-green-600 hover:bg-green-700">
+                Salvar nova senha
+              </Button>
+            </CardFooter>
+          </form>
         </Card>
       </div>
     );
@@ -409,7 +620,7 @@ export default function App() {
                 <p className="text-xs text-slate-500 italic">* Esta escolha não poderá ser alterada depois.</p>
               </div>
             </CardContent>
-            <CardFooter className="flex gap-2">
+            <CardFooter className="flex gap-2 mt-2 border-t border-slate-100 pt-4">
               <Button type="button" variant="ghost" className="flex-1" onClick={() => setIsRegistering(false)}>Cancelar</Button>
               <Button type="submit" className="flex-1 bg-green-600 hover:bg-green-700" disabled={!supabaseReady}>Finalizar Cadastro</Button>
             </CardFooter>
@@ -920,6 +1131,10 @@ export default function App() {
                                     <div className="space-y-4">
                                       {state.users.map(user => {
                                         const bet = state.bets.find(b => b.userId === user.id && b.matchId === match.id);
+                                        const officialResultText = match.homeScore !== undefined && match.awayScore !== undefined
+                                          ? `${match.homeScore} - ${match.awayScore}`
+                                          : 'Ainda sem resultado';
+
                                         return (
                                           <div key={user.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
                                             <div className="flex items-center gap-3">
@@ -930,22 +1145,39 @@ export default function App() {
                                               <div className="flex flex-col">
                                                 <span className="text-sm font-bold text-slate-900">{user.name}</span>
                                                 {user.isAdmin && <span className="text-[9px] text-yellow-600 font-bold uppercase">Admin</span>}
+                                                {isFinished && (
+                                                  <span className="text-[10px] text-slate-500">
+                                                    Resultado oficial: <strong>{officialResultText}</strong>
+                                                  </span>
+                                                )}
                                               </div>
                                             </div>
                                             <div className="flex items-center gap-4">
                                               {bet ? (
-                                                <div className="flex items-center gap-3">
+                                                <div className="flex flex-col items-end gap-1">
                                                   <span className="text-lg font-black text-slate-900">
                                                     {bet.homeScore} - {bet.awayScore}
                                                   </span>
                                                   {isFinished && (
-                                                    <Badge variant="success" className="text-[10px]">
-                                                      +{bet.pointsEarned || 0} pts
-                                                    </Badge>
+                                                    <div className="flex items-center gap-2">
+                                                      <Badge variant="success" className="text-[10px]">
+                                                        +{calculatePoints(bet, match)} pts
+                                                      </Badge>
+                                                      <Badge variant="outline" className="text-[10px]">
+                                                        {getPointsRuleLabel(bet, match)}
+                                                      </Badge>
+                                                    </div>
                                                   )}
                                                 </div>
                                               ) : (
-                                                <span className="text-[10px] text-slate-400 italic">Sem palpite</span>
+                                                <div className="flex flex-col items-end gap-1">
+                                                  <span className="text-[10px] text-slate-400 italic">Sem palpite</span>
+                                                  {isFinished && (
+                                                    <Badge variant="outline" className="text-[10px]">
+                                                      0 pts
+                                                    </Badge>
+                                                  )}
+                                                </div>
                                               )}
                                             </div>
                                           </div>

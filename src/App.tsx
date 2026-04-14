@@ -2025,11 +2025,11 @@ export default function App() {
 
       {/* Winner Modal */}
       <Dialog open={isWinnerModalOpen} onOpenChange={setIsWinnerModalOpen}>
-        <DialogContent className="w-[95vw] sm:max-w-[500px] border-none p-0 overflow-hidden bg-transparent shadow-none max-h-[95vh] flex flex-col">
+        <DialogContent className="w-screen max-w-none h-[100dvh] sm:h-auto sm:w-[95vw] sm:max-w-[500px] border-none p-0 overflow-hidden bg-transparent shadow-none flex flex-col">
           <motion.div 
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-white rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[95vh]"
+            className="bg-white rounded-none sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col h-[100dvh] sm:h-auto"
           >
             <div className="bg-slate-900 p-4 sm:p-8 text-center relative overflow-hidden shrink-0">
               <motion.div 

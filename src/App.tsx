@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
-import { Trophy, Users, DollarSign, Calendar, Shield, LogOut, UserPlus, Filter, Lock, Unlock, Pencil, Trash2, PieChart as PieChartIcon, Eye, EyeOff } from 'lucide-react';
+import { Trophy, Users, DollarSign, Calendar, Shield, LogOut, UserPlus, Filter, Lock, Unlock, Pencil, Trash2, PieChart as PieChartIcon, Eye, EyeOff, MessageCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
 import { GROUPS, COUNTRIES, SCORING_RULES, calculatePoints } from './constants';
@@ -22,6 +22,7 @@ import { supabase } from './lib/supabase';
 
 export default function App() {
   const appInfoLabel = `Inovaflowtec v${__APP_VERSION__} - ${__BUILD_DATE__}`;
+  const whatsappGroupUrl = 'https://chat.whatsapp.com/Bwugcg5uij29gB644uZVJO?mode=gi_t';
 
   const { state, login, logout, registerUser, placeBet, updateMatchResult, togglePaymentStatus, toggleAdminStatus, toggleBetsLock, addMatch, updateMatch, deleteMatch, deleteUser, setEntryFee, setYear, setLogoUrl, setPrizeSettings, resetState } = useAppState();
   const supabaseReady = isSupabaseConfigured;
@@ -919,6 +920,21 @@ export default function App() {
 
         {/* Main Content */}
         <div className="lg:col-span-9 space-y-6">
+          <Card className="border-none shadow-md bg-gradient-to-r from-emerald-50 to-white">
+            <CardContent className="py-4 px-4 sm:px-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <p className="text-sm font-bold text-emerald-800">Grupo oficial no WhatsApp</p>
+                  <p className="text-xs text-slate-600">Acesse o link para entrar no grupo e acompanhar os avisos do bolão.</p>
+                </div>
+                <a href={whatsappGroupUrl} target="_blank" rel="noreferrer" className="w-full sm:w-auto">
+                  <Button className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 gap-2">
+                    <MessageCircle className="w-4 h-4" /> Entrar no grupo
+                  </Button>
+                </a>
+              </div>
+            </CardContent>
+          </Card>
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <div className="flex items-center justify-between mb-6">
               <div className="hidden md:block">

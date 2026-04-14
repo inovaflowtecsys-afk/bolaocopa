@@ -26,7 +26,7 @@ function mapMatch(row: Record<string, any>): Match {
     id:           row.id,
     homeTeam:     row.home_team,
     awayTeam:     row.away_team,
-    group:        row.group,
+    group:        row.group_name ?? row.group,
     date:         row.date,
     status:       row.status ?? 'scheduled',
     homeScore:    row.home_score ?? undefined,
@@ -489,7 +489,7 @@ export function useAppState() {
       .insert([{
         home_team:     matchData.homeTeam,
         away_team:     matchData.awayTeam,
-        group:         matchData.group,
+        group_name:    matchData.group,
         date:          matchData.date,
         status:        'scheduled',
         location:      matchData.location,
@@ -509,7 +509,7 @@ export function useAppState() {
     const payload: Record<string, any> = {};
     if (matchData.homeTeam    !== undefined) payload.home_team     = matchData.homeTeam;
     if (matchData.awayTeam    !== undefined) payload.away_team     = matchData.awayTeam;
-    if (matchData.group       !== undefined) payload.group         = matchData.group;
+    if (matchData.group       !== undefined) payload.group_name    = matchData.group;
     if (matchData.date        !== undefined) payload.date          = matchData.date;
     if (matchData.status      !== undefined) payload.status        = matchData.status;
     if (matchData.homeScore   !== undefined) payload.home_score    = matchData.homeScore;

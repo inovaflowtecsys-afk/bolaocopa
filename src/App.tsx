@@ -2025,51 +2025,51 @@ export default function App() {
 
       {/* Winner Modal */}
       <Dialog open={isWinnerModalOpen} onOpenChange={setIsWinnerModalOpen}>
-        <DialogContent className="sm:max-w-[500px] border-none p-0 overflow-hidden bg-transparent shadow-none">
+        <DialogContent className="w-[95vw] sm:max-w-[500px] border-none p-0 overflow-hidden bg-transparent shadow-none max-h-[95vh] flex flex-col">
           <motion.div 
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-white rounded-3xl overflow-hidden shadow-2xl"
+            className="bg-white rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[95vh]"
           >
-            <div className="bg-slate-900 p-8 text-center relative overflow-hidden">
+            <div className="bg-slate-900 p-4 sm:p-8 text-center relative overflow-hidden shrink-0">
               <motion.div 
                 animate={{ rotate: 360 }}
                 transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
                 className="absolute -top-20 -right-20 w-64 h-64 bg-yellow-400/10 rounded-full blur-3xl"
               />
-              <Trophy className="w-16 h-16 text-yellow-400 mx-auto mb-4 relative z-10" />
-              <h2 className="text-3xl font-black text-white relative z-10">TEMOS UM CAMPEÃO!</h2>
-              <p className="text-slate-400 font-bold relative z-10">A COPA DO MUNDO {state.settings.year} CHEGOU AO FIM</p>
+              <Trophy className="w-12 sm:w-16 h-12 sm:h-16 text-yellow-400 mx-auto mb-2 sm:mb-4 relative z-10" />
+              <h2 className="text-2xl sm:text-3xl font-black text-white relative z-10 leading-tight">TEMOS UM CAMPEÃO!</h2>
+              <p className="text-xs sm:text-sm text-slate-400 font-bold relative z-10 mt-1">A COPA DO MUNDO {state.settings.year} CHEGOU AO FIM</p>
             </div>
             
-            <div className="p-8 text-center space-y-6">
+            <div className="p-4 sm:p-8 text-center space-y-4 sm:space-y-6 overflow-y-auto flex-1">
               {sortedUsers[0] && (
-                <div className="space-y-4">
+                <div className="space-y-3 sm:space-y-4">
                   <div className="relative inline-block">
-                    <Avatar className="h-32 w-32 border-4 border-yellow-400 shadow-xl mx-auto">
+                    <Avatar className="h-24 sm:h-32 w-24 sm:w-32 border-4 border-yellow-400 shadow-xl mx-auto">
                       <AvatarImage src={sortedUsers[0].photoUrl} />
-                      <AvatarFallback className="text-4xl">{sortedUsers[0].name[0]}</AvatarFallback>
+                      <AvatarFallback className="text-3xl sm:text-4xl">{sortedUsers[0].name[0]}</AvatarFallback>
                     </Avatar>
-                    <div className="absolute -bottom-2 -right-2 bg-yellow-400 text-slate-900 w-10 h-10 rounded-full flex items-center justify-center font-black shadow-lg border-4 border-white">
+                    <div className="absolute -bottom-2 -right-2 bg-yellow-400 text-slate-900 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center font-black shadow-lg border-4 border-white text-xs sm:text-sm">
                       1º
                     </div>
                   </div>
                   
                   <div>
-                    <h3 className="text-2xl font-black text-slate-900 uppercase">{sortedUsers[0].name}</h3>
-                    <p className="text-slate-500 font-bold">Vencedor do Bolão com {sortedUsers[0].totalPoints} pontos!</p>
+                    <h3 className="text-lg sm:text-2xl font-black text-slate-900 uppercase break-words">{sortedUsers[0].name}</h3>
+                    <p className="text-xs sm:text-sm text-slate-500 font-bold mt-1">Vencedor do Bolão com {sortedUsers[0].totalPoints} pontos!</p>
                   </div>
 
-                  <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-2">
-                    <span className="text-xs text-slate-400 uppercase font-bold">Prêmio Total Estimado</span>
-                    <h4 className="text-4xl font-black text-green-600">R$ {prizes.first.toFixed(2)}</h4>
-                    <p className="text-[10px] text-slate-400 italic">Baseado em {state.settings.prizes.firstPlacePercent}% do total arrecadado</p>
+                  <div className="bg-slate-50 p-3 sm:p-6 rounded-2xl border border-slate-100 space-y-1 sm:space-y-2">
+                    <span className="text-[10px] sm:text-xs text-slate-400 uppercase font-bold">Prêmio Total Estimado</span>
+                    <h4 className="text-3xl sm:text-4xl font-black text-green-600">R$ {prizes.first.toFixed(2)}</h4>
+                    <p className="text-[8px] sm:text-[10px] text-slate-400 italic">Baseado em {state.settings.prizes.firstPlacePercent}% do total arrecadado</p>
                   </div>
                 </div>
               )}
 
               <Button 
-                className="w-full h-14 text-lg font-black bg-slate-900 hover:bg-slate-800 rounded-xl"
+                className="w-full h-11 sm:h-14 text-sm sm:text-lg font-black bg-slate-900 hover:bg-slate-800 rounded-xl"
                 onClick={() => setIsWinnerModalOpen(false)}
               >
                 VER CLASSIFICAÇÃO COMPLETA

@@ -439,10 +439,18 @@ export default function App() {
             <Button variant="secondary" className="w-full h-12 gap-2" onClick={() => setIsRegistering(true)} disabled={!supabaseReady}>
               <UserPlus className="w-4 h-4" /> Criar Novo Cadastro
             </Button>
-            <div className="flex justify-center pt-2">
+            <div className="flex flex-col items-center gap-1 pt-2">
               <Button variant="link" size="sm" className="text-[10px] text-slate-400" onClick={resetState}>
                 {appInfoLabel}
               </Button>
+              <a
+                href="http://www.inovaflowtec.com.br"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] font-medium text-slate-600 hover:text-slate-900 underline underline-offset-2"
+              >
+                www.inovaflowtec.com.br
+              </a>
             </div>
           </CardContent>
         </Card>
@@ -1483,66 +1491,72 @@ export default function App() {
                   </CardHeader>
                   <CardContent className="p-4 space-y-3">
                     {state.users.map(user => (
-                      <div key={user.id} className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-lg border bg-slate-50 hover:bg-slate-100 transition-colors">
-                        {/* Avatar + Nome + Email */}
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <Avatar className={`shrink-0 ${user.isAdmin ? 'border-2 border-yellow-400' : ''}`}>
-                            <AvatarImage src={user.photoUrl} />
-                            <AvatarFallback>{user.name[0]}</AvatarFallback>
-                          </Avatar>
-                          <div className="min-w-0">
-                            <p className="font-semibold text-sm text-slate-800 truncate">{user.name}</p>
-                            <p className="text-xs text-slate-500 truncate">{user.email}</p>
+                      <div key={user.id} className="p-3 rounded-lg border bg-slate-50 hover:bg-slate-100 transition-colors">
+                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_auto_auto] gap-3 xl:items-center">
+                          {/* Avatar + Nome + Email */}
+                          <div className="flex items-center gap-3 min-w-0">
+                            <Avatar className={`shrink-0 ${user.isAdmin ? 'border-2 border-yellow-400' : ''}`}>
+                              <AvatarImage src={user.photoUrl} />
+                              <AvatarFallback>{user.name[0]}</AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0">
+                              <p className="font-semibold text-sm text-slate-800 whitespace-nowrap overflow-hidden text-ellipsis">{user.name}</p>
+                              <p className="text-xs text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">{user.email}</p>
+                            </div>
                           </div>
-                        </div>
-                        {/* Badges */}
-                        <div className="flex items-center gap-2 shrink-0">
-                          <Badge variant={user.isAdmin ? "warning" : "outline"} className="gap-1">
-                            {user.isAdmin ? <Shield className="w-3 h-3" /> : null}
-                            {user.isAdmin ? 'Admin' : 'Membro'}
-                          </Badge>
-                          <Badge variant={user.isPaid ? "success" : "destructive"}>
-                            {user.isPaid ? 'Pago' : 'Pendente'}
-                          </Badge>
-                        </div>
-                        {/* Ações */}
-                        <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                          {user.id !== currentUser?.id && (
+
+                          {/* Badges */}
+                          <div className="flex items-center gap-2 flex-wrap xl:justify-end">
+                            <Badge variant={user.isAdmin ? "warning" : "outline"} className="gap-1 whitespace-nowrap">
+                              {user.isAdmin ? <Shield className="w-3 h-3" /> : null}
+                              {user.isAdmin ? 'Admin' : 'Membro'}
+                            </Badge>
+                            <Badge variant={user.isPaid ? "success" : "destructive"} className="whitespace-nowrap">
+                              {user.isPaid ? 'Pago' : 'Pendente'}
+                            </Badge>
+                          </div>
+
+                          {/* Ações */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 w-full xl:w-auto">
+                            {user.id !== currentUser?.id && (
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                className="w-full whitespace-nowrap"
+                                onClick={() => {
+                                  if (confirm(`Tem certeza que deseja banir ${user.name}?`)) {
+                                    deleteUser(user.id);
+                                    toast.success(`${user.name} foi banido.`);
+                                  }
+                                }}
+                              >
+                                Banir
+                              </Button>
+                            )}
+                            {user.id !== currentUser?.id && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className={`${user.isAdmin
+                                  ? 'text-red-600 border-red-200 bg-red-50 hover:bg-red-100'
+                                  : 'text-yellow-600 border-yellow-200 bg-yellow-50 hover:bg-yellow-100'} w-full whitespace-nowrap`}
+                                onClick={() => {
+                                  toggleAdminStatus(user.id);
+                                  toast.success(`${user.name} agora é ${!user.isAdmin ? 'Administrador' : 'Participante'}`);
+                                }}
+                              >
+                                {user.isAdmin ? 'Remover Admin' : 'Tornar Admin'}
+                              </Button>
+                            )}
                             <Button
-                              variant="destructive"
+                              variant={user.isPaid ? "outline" : "default"}
                               size="sm"
-                              onClick={() => {
-                                if (confirm(`Tem certeza que deseja banir ${user.name}?`)) {
-                                  deleteUser(user.id);
-                                  toast.success(`${user.name} foi banido.`);
-                                }
-                              }}
+                              className="w-full whitespace-nowrap"
+                              onClick={() => togglePaymentStatus(user.id)}
                             >
-                              Banir
+                              {user.isPaid ? 'Estornar' : 'Confirmar Pgto'}
                             </Button>
-                          )}
-                          {user.id !== currentUser?.id && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className={user.isAdmin
-                                ? "text-red-600 border-red-200 bg-red-50 hover:bg-red-100"
-                                : "text-yellow-600 border-yellow-200 bg-yellow-50 hover:bg-yellow-100"}
-                              onClick={() => {
-                                toggleAdminStatus(user.id);
-                                toast.success(`${user.name} agora é ${!user.isAdmin ? 'Administrador' : 'Participante'}`);
-                              }}
-                            >
-                              {user.isAdmin ? 'Remover Admin' : 'Tornar Admin'}
-                            </Button>
-                          )}
-                          <Button
-                            variant={user.isPaid ? "outline" : "default"}
-                            size="sm"
-                            onClick={() => togglePaymentStatus(user.id)}
-                          >
-                            {user.isPaid ? 'Estornar' : 'Confirmar Pgto'}
-                          </Button>
+                          </div>
                         </div>
                       </div>
                     ))}

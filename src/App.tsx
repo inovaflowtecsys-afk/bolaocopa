@@ -29,6 +29,9 @@ export default function App() {
   const [activeTab, setActiveTab] = React.useState('matches');
   const [groupFilter, setGroupFilter] = React.useState('all');
   const [isRegistering, setIsRegistering] = React.useState(false);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [registerErrors, setRegisterErrors] = React.useState<string[]>([]);
+  const [registerApiError, setRegisterApiError] = React.useState<string | null>(null);
   const [selectedMatch, setSelectedMatch] = React.useState<Match | null>(null);
   const [betScores, setBetScores] = React.useState({ home: 0, away: 0 });
   const [loginForm, setLoginForm] = React.useState({ email: '', password: '' });
@@ -39,6 +42,7 @@ export default function App() {
   const [resetPasswordForm, setResetPasswordForm] = React.useState({ password: '', confirmPassword: '' });
   const [resetPasswordError, setResetPasswordError] = React.useState<string | null>(null);
   const [base64Photo, setBase64Photo] = React.useState<string>('');
+  const [registerForm, setRegisterForm] = React.useState({ name: '', email: '', password: '', champion: '' });
   const [adminMatchFilter, setAdminMatchFilter] = React.useState('all');
   const [viewingBetsMatch, setViewingBetsMatch] = React.useState<Match | null>(null);
   const [viewingUserBets, setViewingUserBets] = React.useState<User | null>(null);
@@ -65,6 +69,15 @@ export default function App() {
       setActiveTab('matches');
     }
   }, [currentUser, activeTab]);
+
+  React.useEffect(() => {
+    if (!currentUser) return;
+
+    setIsRegistering(false);
+    setIsForgotPassword(false);
+    setIsResetPassword(false);
+    setActiveTab('matches');
+  }, [currentUser]);
 
   React.useEffect(() => {
     const hasRecoveryHash = window.location.hash.includes('type=recovery');
@@ -141,19 +154,48 @@ export default function App() {
   };
 
   const usersWithPendingBets = state.users.map(user => {
-    const userBetsCount = state.bets.filter(b => b.userId === user.id).length;
+    const scheduledMatches = state.matches.filter(m => m.status === 'scheduled');
+    const userBetsOnScheduled = state.bets.filter(b => 
+      b.userId === user.id && scheduledMatches.some(m => m.id === b.matchId)
+    ).length;
     return {
       ...user,
-      pendingCount: Math.max(0, state.matches.length - userBetsCount)
+      pendingCount: Math.max(0, scheduledMatches.length - userBetsOnScheduled)
     };
   });
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      const img = new window.Image();
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setBase64Photo(reader.result as string);
+      reader.onload = (ev) => {
+        img.onload = () => {
+          // Redimensiona para 300x300 mantendo proporção
+          const canvas = document.createElement('canvas');
+          const maxSize = 300;
+          let width = img.width;
+          let height = img.height;
+          if (width > height) {
+            if (width > maxSize) {
+              height = Math.round((height *= maxSize / width));
+              width = maxSize;
+            }
+          } else {
+            if (height > maxSize) {
+              width = Math.round((width *= maxSize / height));
+              height = maxSize;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          // JPEG qualidade 0.7
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+          setBase64Photo(dataUrl);
+        };
+        img.src = ev.target?.result as string;
       };
       reader.readAsDataURL(file);
     }
@@ -162,6 +204,7 @@ export default function App() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
+    setIsSubmitting(true);
     const success = await login(loginForm.email, loginForm.password);
     if (success) {
       toast.success('Login realizado com sucesso!');
@@ -169,22 +212,45 @@ export default function App() {
       setLoginError('E-mail ou senha incorretos. Por favor, tente novamente.');
       toast.error('E-mail ou senha incorretos.');
     }
+    setIsSubmitting(false);
   };
 
   const handleRegister = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const name = formData.get('name') as string;
-    const email = formData.get('email') as string;
-    const password = formData.get('password') as string;
-    const champion = formData.get('champion') as string;
+    setRegisterApiError(null);
+    setIsSubmitting(true);
+    const name = registerForm.name.trim();
+    const email = registerForm.email.trim();
+    const password = registerForm.password;
+    const champion = registerForm.champion;
     const photoUrl = base64Photo || `https://picsum.photos/seed/${name}/100/100`;
 
-    const success = await registerUser({ name, email, password, championPrediction: champion, photoUrl });
-    if (success) {
-      setIsRegistering(false);
-      setBase64Photo('');
+    const missingFields: string[] = [];
+    if (!name) missingFields.push('Nome');
+    if (!email) missingFields.push('E-mail');
+    if (!password) missingFields.push('Senha');
+    if (!champion) missingFields.push('Campeão');
+    if (!photoUrl) missingFields.push('Foto');
+
+    if (missingFields.length > 0) {
+      setRegisterErrors(missingFields);
+      setIsSubmitting(false);
+      return;
+    } else {
+      setRegisterErrors([]);
     }
+
+    const result = await registerUser({ name, email, password, championPrediction: champion, photoUrl });
+    if (result.success) {
+      setRegisterForm({ name: '', email: '', password: '', champion: '' });
+      setBase64Photo('');
+      if (!result.autoLoggedIn) {
+        setIsRegistering(false);
+      }
+    } else {
+      setRegisterApiError(result.error || 'Erro desconhecido ao cadastrar.');
+    }
+    setIsSubmitting(false);
   };
 
   const handleForgotPassword = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -320,6 +386,7 @@ export default function App() {
     const hasPending = usersWithPendingBets.some(u => u.pendingCount > 0 && !u.isAdmin);
     if (!state.settings.betsLocked && hasPending) {
       toast.error('Não é possível bloquear os palpites enquanto houver participantes com palpites pendentes.');
+      setIsPendingBetsOpen(true);
       return;
     }
     toggleBetsLock();
@@ -341,6 +408,17 @@ export default function App() {
   const prizes = calculatePrizeValues();
 
   if (!currentUser && !isRegistering && !isForgotPassword && !isResetPassword) {
+    // Função para testar conexão com Supabase
+    const handleTestSupabase = async () => {
+      try {
+        const { error } = await supabase.from('settings').select('*').limit(1);
+        if (error) throw error;
+        toast.success('Conexão com Supabase OK!');
+      } catch (err) {
+        toast.error('Erro ao conectar no Supabase: ' + (err?.message || err));
+      }
+    };
+
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans relative overflow-hidden">
         {/* Background Image with Transparency */}
@@ -367,6 +445,7 @@ export default function App() {
             <CardDescription>Acesse sua conta para palpitar</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+                        {/* Botão de teste removido */}
             {!supabaseReady && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
                 <p className="font-semibold">Supabase não configurado</p>
@@ -400,6 +479,7 @@ export default function App() {
                   value={loginForm.password}
                   onChange={(e) => setLoginForm(prev => ({ ...prev, password: e.target.value }))}
                   className="pr-10"
+                  autoComplete="current-password"
                   required 
                 />
                 <button
@@ -410,14 +490,24 @@ export default function App() {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-              <div className="pt-1">
-                <Button type="submit" className="w-full h-12 bg-slate-900 hover:bg-slate-800" disabled={!supabaseReady}>Entrar</Button>
-              </div>
-              <div className="flex justify-end pt-1">
+              <div className="pt-1 flex flex-col items-center gap-3">
+                <Button type="submit" className="w-full h-12 bg-slate-900 hover:bg-slate-800 flex items-center justify-center gap-2" disabled={!supabaseReady || isSubmitting}>
+                  {isSubmitting ? (
+                    <>
+                      <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Acessando, aguarde...
+                    </>
+                  ) : (
+                    'Entrar'
+                  )}
+                </Button>
                 <Button
                   type="button"
-                  variant="link"
-                  className="h-auto px-0 text-xs text-slate-500"
+                  variant="ghost"
+                  className="h-auto px-0 text-xs text-slate-500 hover:bg-transparent hover:text-slate-700"
                   onClick={() => {
                     setIsForgotPassword(true);
                     setIsRegistering(false);
@@ -437,9 +527,21 @@ export default function App() {
                 <span className="bg-white px-2 text-slate-500">Ou</span>
               </div>
             </div>
-            <Button variant="secondary" className="w-full h-12 gap-2" onClick={() => setIsRegistering(true)} disabled={!supabaseReady}>
-              <UserPlus className="w-4 h-4" /> Criar Novo Cadastro
-            </Button>
+            {state.settings.betsLocked ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900 text-center font-medium animate-in fade-in">
+                <Lock className="w-4 h-4 inline-block mr-2 -mt-1" />
+                O Bolão está fechado para novos cadastros
+              </div>
+            ) : (
+              <Button 
+                variant="secondary" 
+                className="w-full h-12 gap-2" 
+                onClick={() => setIsRegistering(true)} 
+                disabled={!supabaseReady}
+              >
+                <UserPlus className="w-4 h-4" /> Criar Novo Cadastro
+              </Button>
+            )}
             <div className="flex flex-col items-center gap-1 pt-2">
               <Button variant="link" size="sm" className="text-[10px] text-slate-400" onClick={resetState}>
                 {appInfoLabel}
@@ -572,8 +674,23 @@ export default function App() {
             <CardTitle className="text-2xl font-bold">Novo Cadastro</CardTitle>
             <CardDescription>Preencha os dados para entrar no bolão</CardDescription>
           </CardHeader>
-          <form onSubmit={handleRegister}>
+          <form onSubmit={handleRegister} autoComplete="off">
             <CardContent className="space-y-4">
+              {registerErrors.length > 0 && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  <strong>Preencha os campos obrigatórios:</strong>
+                  <ul className="mt-1 list-disc pl-5">
+                    {registerErrors.map((field) => (
+                      <li key={field}>{field}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {registerApiError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 font-medium">
+                  {registerApiError}
+                </div>
+              )}
               {!supabaseReady && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
                   {supabaseConfigError}
@@ -581,15 +698,39 @@ export default function App() {
               )}
               <div className="space-y-2">
                 <Label htmlFor="name">Nome Completo</Label>
-                <Input id="name" name="name" placeholder="Ex: João Silva" required />
+                <Input
+                  id="name"
+                  name="name"
+                  placeholder="Ex: Joao Silva"
+                  value={registerForm.name}
+                  onChange={(e) => setRegisterForm(prev => ({ ...prev, name: e.target.value }))}
+                  required
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="email">E-mail</Label>
-                <Input id="email" name="email" type="email" placeholder="seu@email.com" required />
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  placeholder="seu@email.com"
+                  value={registerForm.email}
+                  onChange={(e) => setRegisterForm(prev => ({ ...prev, email: e.target.value }))}
+                  required
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">Senha</Label>
-                <Input id="password" name="password" type="password" placeholder="Crie uma senha" required />
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  placeholder="Crie uma senha"
+                  value={registerForm.password}
+                  onChange={(e) => setRegisterForm(prev => ({ ...prev, password: e.target.value }))}
+                  required
+                  autoComplete="new-password"
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="photo">Sua Foto</Label>
@@ -613,7 +754,7 @@ export default function App() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="champion">Quem será o Campeão?</Label>
-                <Select name="champion" required>
+                <Select value={registerForm.champion} onValueChange={(value) => setRegisterForm(prev => ({ ...prev, champion: value }))} required>
                   <SelectTrigger className="h-12">
                     <SelectValue placeholder="Selecione um país" />
                   </SelectTrigger>
@@ -632,8 +773,20 @@ export default function App() {
               </div>
             </CardContent>
             <CardFooter className="flex gap-2 mt-2 border-t border-slate-100 pt-4">
-              <Button type="button" variant="ghost" className="flex-1" onClick={() => setIsRegistering(false)}>Cancelar</Button>
-              <Button type="submit" className="flex-1 bg-green-600 hover:bg-green-700" disabled={!supabaseReady}>Finalizar Cadastro</Button>
+              <Button type="button" variant="ghost" className="flex-1" onClick={() => setIsRegistering(false)} disabled={isSubmitting}>Cancelar</Button>
+              <Button type="submit" className="flex-1 bg-green-600 hover:bg-green-700" disabled={!supabaseReady || isSubmitting}>
+                {isSubmitting ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Processando...
+                  </>
+                ) : (
+                  'Finalizar Cadastro'
+                )}
+              </Button>
             </CardFooter>
           </form>
         </Card>
@@ -746,6 +899,14 @@ export default function App() {
           </Button>
         </div>
       </header>
+
+      {!currentUser?.isPaid && (
+        <div className="bg-red-500/10 border-b border-red-500/20 px-4 py-1.5 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-4 text-[11px] text-red-800 text-center backdrop-blur-sm sticky top-[65px] sm:top-[65px] z-10">
+          <span className="font-bold uppercase tracking-wider text-[10px] opacity-80">Pagamento Pendente</span>
+          <span className="font-medium">Chave PIX (Celular): <strong>(21) 98005-1008</strong></span>
+          <span className="font-medium">Valor: <strong>R$ {state.settings.entryFee.toFixed(2)}</strong></span>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto p-4 md:p-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
         
@@ -887,14 +1048,14 @@ export default function App() {
             <Card className="border-none shadow-md border-l-4 border-l-slate-900">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
-                  <Shield className="w-4 h-4" /> Admin Controls
+                  <Shield className="w-4 h-4" /> Gestão
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
                 <Button 
                   variant={state.settings.betsLocked ? "destructive" : "outline"} 
                   className="w-full justify-start gap-2 text-xs"
-                  onClick={toggleBetsLock}
+                  onClick={handleToggleBetsLock}
                 >
                   {state.settings.betsLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
                   {state.settings.betsLocked ? 'Desbloquear Palpites' : 'Bloquear Palpites'}
@@ -991,7 +1152,7 @@ export default function App() {
                   {filteredMatches.map(match => {
                     const userBet = state.bets.find(b => b.userId === currentUser?.id && b.matchId === match.id);
                     const isFinished = match.status === 'finished';
-                    
+                    const pontos = userBet ? calculatePoints(userBet, match, true) : 0;
                     return (
                       <motion.div
                         key={match.id}
@@ -1061,11 +1222,9 @@ export default function App() {
                                     <Badge variant="secondary" className="text-lg px-3 py-1 font-black">
                                       {userBet.homeScore} - {userBet.awayScore}
                                     </Badge>
-                                    {isFinished && (
-                                      <Badge variant="success" className="animate-bounce">
-                                        +{userBet.pointsEarned} pts
-                                      </Badge>
-                                    )}
+                                    <Badge variant={isFinished ? "success" : "outline"} className={isFinished ? "animate-bounce" : ""}>
+                                      {pontos} pts
+                                    </Badge>
                                   </div>
                                 </div>
                               ) : (
@@ -1162,14 +1321,14 @@ export default function App() {
                                           : 'Ainda sem resultado';
 
                                         return (
-                                          <div key={user.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
-                                            <div className="flex items-center gap-3">
-                                              <Avatar className="h-8 w-8">
+                                          <div key={user.id} className="flex items-center justify-between gap-2 p-3 rounded-lg bg-slate-50 border border-slate-100">
+                                            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                                              <Avatar className="h-8 w-8 shrink-0">
                                                 <AvatarImage src={user.photoUrl} />
                                                 <AvatarFallback>{user.name[0]}</AvatarFallback>
                                               </Avatar>
-                                              <div className="flex flex-col">
-                                                <span className="text-sm font-bold text-slate-900">{user.name}</span>
+                                              <div className="flex flex-col min-w-0">
+                                                <span className="text-sm font-bold text-slate-900 truncate">{user.name}</span>
                                                 {user.isAdmin && <span className="text-[9px] text-yellow-600 font-bold uppercase">Admin</span>}
                                                 {isFinished && (
                                                   <span className="text-[10px] text-slate-500">
@@ -2002,8 +2161,14 @@ export default function App() {
                                 variant="secondary" 
                                 className="w-full h-8 text-xs font-bold"
                                 onClick={() => {
-                                  const h = parseInt((document.getElementById(`home-${match.id}`) as HTMLInputElement).value);
-                                  const a = parseInt((document.getElementById(`away-${match.id}`) as HTMLInputElement).value);
+                                  const hVal = (document.getElementById(`home-${match.id}`) as HTMLInputElement).value;
+                                  const aVal = (document.getElementById(`away-${match.id}`) as HTMLInputElement).value;
+                                  if (hVal === '' || aVal === '') {
+                                    toast.error('Preencha os dois placares antes de salvar.');
+                                    return;
+                                  }
+                                  const h = parseInt(hVal);
+                                  const a = parseInt(aVal);
                                   updateMatchResult(match.id, h, a);
                                   toast.success('Resultado atualizado!');
                                 }}

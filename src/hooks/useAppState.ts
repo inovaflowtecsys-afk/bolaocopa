@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { AppState, User, Match, Bet } from '../types';
 import { calculatePoints } from '../constants';
 import { toast } from 'sonner';
@@ -10,42 +10,42 @@ import { isSupabaseConfigured, supabase, supabaseConfigError } from '../lib/supa
 
 function mapUser(row: Record<string, any>): User {
   return {
-    id:                  row.id,
-    name:                row.name,
-    email:               row.email,
-    photoUrl:            row.photo_url ?? '',
-    championPrediction:  row.champion_prediction ?? '',
-    isPaid:              row.is_paid ?? false,
-    isAdmin:             row.is_admin ?? false,
-    totalPoints:         row.total_points ?? 0,
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    photoUrl: row.photo_url ?? '',
+    championPrediction: row.champion_prediction ?? '',
+    isPaid: row.is_paid ?? false,
+    isAdmin: row.is_admin ?? false,
+    totalPoints: row.total_points ?? 0,
   };
 }
 
 function mapMatch(row: Record<string, any>): Match {
   return {
-    id:           row.id,
-    homeTeam:     row.home_team,
-    awayTeam:     row.away_team,
-    group:        row.group_name ?? row.group,
-    date:         row.date,
-    status:       row.status ?? 'scheduled',
-    homeScore:    row.home_score ?? undefined,
-    awayScore:    row.away_score ?? undefined,
-    location:     row.location ?? undefined,
-    homeFlagUrl:  row.home_flag_url ?? undefined,
-    awayFlagUrl:  row.away_flag_url ?? undefined,
+    id: row.id,
+    homeTeam: row.home_team,
+    awayTeam: row.away_team,
+    group: row.group_name ?? row.group,
+    date: row.date,
+    status: row.status ?? 'scheduled',
+    homeScore: row.home_score ?? undefined,
+    awayScore: row.away_score ?? undefined,
+    location: row.location ?? undefined,
+    homeFlagUrl: row.home_flag_url ?? undefined,
+    awayFlagUrl: row.away_flag_url ?? undefined,
   };
 }
 
 function mapBet(row: Record<string, any>): Bet {
   return {
-    id:            row.id,
-    userId:        row.user_id,
-    matchId:       row.match_id,
-    homeScore:     row.home_score,
-    awayScore:     row.away_score,
-    pointsEarned:  row.points_earned ?? undefined,
-    isLocked:      row.is_locked ?? false,
+    id: row.id,
+    userId: row.user_id,
+    matchId: row.match_id,
+    homeScore: row.home_score,
+    awayScore: row.away_score,
+    pointsEarned: row.points_earned ?? undefined,
+    isLocked: row.is_locked ?? false,
   };
 }
 
@@ -82,8 +82,54 @@ function mapSettings(row: Record<string, any> | null | undefined, fallback = ini
   };
 }
 
+const SETTINGS_CACHE_KEY = 'bolao-settings-cache';
+const MATCHES_CACHE_KEY = 'bolao-matches-cache';
+
+function mapAuthUser(authUser: { id: string; email?: string; user_metadata?: Record<string, any> }): User {
+  return {
+    id: authUser.id,
+    name: authUser.user_metadata?.name ?? authUser.email?.split('@')[0] ?? 'Participante',
+    email: authUser.email ?? '',
+    photoUrl: authUser.user_metadata?.photo_url ?? '',
+    championPrediction: authUser.user_metadata?.champion_prediction ?? '',
+    isPaid: false,
+    isAdmin: false,
+    totalPoints: 0,
+  };
+}
+
 export function useAppState() {
-  const [state, setState] = useState<AppState>(initialState);
+  const loadCachedSettings = () => {
+    try {
+      const raw = localStorage.getItem(SETTINGS_CACHE_KEY);
+      if (!raw) return initialState.settings;
+
+      return mapSettings(JSON.parse(raw), initialState.settings);
+    } catch {
+      return initialState.settings;
+    }
+  };
+
+  const loadCachedMatches = () => {
+    try {
+      const raw = localStorage.getItem(MATCHES_CACHE_KEY);
+      if (!raw) return initialState.matches;
+
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map(mapMatch) : initialState.matches;
+    } catch {
+      return initialState.matches;
+    }
+  };
+
+  const [state, setState] = useState<AppState>({
+    ...initialState,
+    settings: loadCachedSettings(),
+    matches: loadCachedMatches(),
+  });
+  const isHydrating = useRef(false);
+  const hydrateDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressAuthHydrationForUser = useRef<string | null>(null);
 
   const ensureSupabaseReady = (action: string, showToast = true) => {
     if (isSupabaseConfigured) {
@@ -113,7 +159,104 @@ export function useAppState() {
     return data ? mapUser(data) : null;
   };
 
+  const waitForUserProfile = async (userId: string, retries = 5, delayMs = 300) => {
+    for (let attempt = 0; attempt < retries; attempt++) {
+      const profile = await fetchUserProfile(userId);
+      if (profile) {
+        return profile;
+      }
+
+      if (attempt < retries - 1) {
+        await new Promise(res => setTimeout(res, delayMs * (attempt + 1)));
+      }
+    }
+
+    return null;
+  };
+
+  const getReadableSupabaseError = (error: unknown, fallback: string) => {
+    const message =
+      typeof error === 'string'
+        ? error
+        : error instanceof Error
+          ? error.message
+          : typeof error === 'object' && error && 'message' in error
+            ? String((error as { message?: unknown }).message)
+            : '';
+
+    const normalizedMessage = message.toLowerCase();
+    const isNetworkError =
+      normalizedMessage.includes('failed to fetch') ||
+      normalizedMessage.includes('networkerror') ||
+      normalizedMessage.includes('err_connection') ||
+      normalizedMessage.includes('http2') ||
+      normalizedMessage.includes('fetch');
+
+    if (isNetworkError) {
+      return 'Não foi possível conectar ao Supabase agora. Verifique sua internet, VPN, firewall ou tente novamente em alguns segundos.';
+    }
+
+    return fallback;
+  };
+
+  const handleSupabaseError = (error: any, context: string) => {
+    console.error(`Erro ao ${context}:`, error);
+    toast.error(getReadableSupabaseError(error, `Erro ao ${context}. Verifique sua conex?o ou firewall.`));
+    return null;
+  };
+
+  const cacheSettings = (settings: AppState['settings']) => {
+    try {
+      localStorage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(settings));
+    } catch {
+      // Ignora erro de cache para não interromper a tela.
+    }
+  };
+
+  const cacheMatches = (matches: Match[]) => {
+    try {
+      const rows = matches.map(match => ({
+        id: match.id,
+        home_team: match.homeTeam,
+        away_team: match.awayTeam,
+        group_name: match.group,
+        date: match.date,
+        status: match.status,
+        home_score: match.homeScore,
+        away_score: match.awayScore,
+        location: match.location,
+        home_flag_url: match.homeFlagUrl,
+        away_flag_url: match.awayFlagUrl,
+      }));
+
+      localStorage.setItem(MATCHES_CACHE_KEY, JSON.stringify(rows));
+    } catch {
+      // Ignora erro de cache para não interromper a tela.
+    }
+  };
+
+  // Helper to retry supabase calls on network errors
+  const withRetry = async <T>(fn: () => PromiseLike<T>, context: string, retries = 3, delayMs = 500): Promise<T | null> => {
+    for (let attempt = 0; attempt < 2; attempt++) { // só 2 tentativas
+      try {
+        return await fn();
+      } catch (err) {
+        if (attempt === 1) {
+          handleSupabaseError(err, context);
+          return null;
+        }
+        // espera menor
+        await new Promise(res => setTimeout(res, 100));
+      }
+    }
+    return null;
+  };
+
   const hydrateState = async (userId: string | null) => {
+    // Evita chamadas paralelas simultâneas
+    if (isHydrating.current) return;
+    isHydrating.current = true;
+
     if (!ensureSupabaseReady('carregar dados', false)) {
       setState(prev => ({
         ...prev,
@@ -122,17 +265,37 @@ export function useAppState() {
         bets: [],
         currentUser: null,
       }));
+      isHydrating.current = false;
       return;
     }
 
     try {
       const [matchesRes, settingsRes] = await Promise.all([
-        supabase.from('matches').select('*').order('date', { ascending: true }),
-        supabase.from('settings').select('*').eq('id', 1).maybeSingle(),
+        withRetry(async () => await supabase.from('matches').select('*').order('date', { ascending: true }), 'buscar partidas'),
+        withRetry(async () => await supabase.from('settings').select('*').eq('id', 1).maybeSingle(), 'buscar configura??es'),
       ]);
 
-      if (matchesRes.error) throw matchesRes.error;
-      if (settingsRes.error) throw settingsRes.error;
+      const resolvedMatches = matchesRes
+        ? (matchesRes.data ?? []).map(mapMatch)
+        : state.matches;
+
+      if (!matchesRes && resolvedMatches.length === 0) return;
+
+      const resolvedSettings = settingsRes
+        ? mapSettings(settingsRes.data, state.settings)
+        : state.settings;
+
+      if (matchesRes) {
+        cacheMatches(resolvedMatches);
+      } else {
+        toast.error('Não foi possível atualizar os jogos agora. Usando a última lista salva localmente.');
+      }
+
+      if (settingsRes) {
+        cacheSettings(resolvedSettings);
+      } else {
+        toast.error('Não foi possível atualizar as configurações agora. Usando os dados locais salvos.');
+      }
 
       let currentUser: User | null = null;
       let users: User[] = [];
@@ -163,14 +326,16 @@ export function useAppState() {
       setState(prev => ({
         ...prev,
         users,
-        matches: (matchesRes.data ?? []).map(mapMatch),
+        matches: resolvedMatches,
         bets,
         currentUser,
-        settings: mapSettings(settingsRes.data, prev.settings),
+        settings: resolvedSettings,
       }));
     } catch (error) {
       console.error('Erro ao buscar dados:', error);
       toast.error('Erro ao carregar dados do Supabase.');
+    } finally {
+      isHydrating.current = false;
     }
   };
 
@@ -194,11 +359,12 @@ export function useAppState() {
       .single();
 
     if (error) {
-      toast.error(errorMessage);
+      toast.error(`${errorMessage} | Detalhes: ${error.message}`);
       return null;
     }
 
     const mappedSettings = mapSettings(data, state.settings);
+    cacheSettings(mappedSettings);
     setState(prev => ({ ...prev, settings: mappedSettings }));
     return mappedSettings;
   };
@@ -225,11 +391,35 @@ export function useAppState() {
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!isMounted) return;
-      void hydrateState(session?.user?.id ?? null);
+
+      if (
+        suppressAuthHydrationForUser.current &&
+        session?.user?.id === suppressAuthHydrationForUser.current
+      ) {
+        return;
+      }
+
+      if (!session && suppressAuthHydrationForUser.current) {
+        suppressAuthHydrationForUser.current = null;
+      }
+
+      // Debounce para evitar múltiplas chamadas simultâneas quando vários eventos
+      // de auth disparam em sequência (ex: SIGNED_IN + TOKEN_REFRESHED + SIGNED_OUT)
+      if (hydrateDebounceTimer.current) {
+        clearTimeout(hydrateDebounceTimer.current);
+      }
+      hydrateDebounceTimer.current = setTimeout(() => {
+        if (isMounted) {
+          void hydrateState(session?.user?.id ?? null);
+        }
+      }, 300);
     });
 
     return () => {
       isMounted = false;
+      if (hydrateDebounceTimer.current) {
+        clearTimeout(hydrateDebounceTimer.current);
+      }
       listener.subscription.unsubscribe();
     };
   }, []);
@@ -238,12 +428,16 @@ export function useAppState() {
     if (!ensureSupabaseReady('fazer login')) return false;
 
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) { console.error('Erro no login:', error); return false; }
+    if (error) {
+      toast.error('E-mail ou senha incorretos.');
+      return false;
+    }
 
-    const userProfile = await fetchUserProfile(data.user.id);
-    if (!userProfile) {
+    // Busca perfil do usuário na tabela users
+    const { data: userDb, error: userDbError } = await supabase.from('users').select('*').eq('id', data.user.id).maybeSingle();
+    if (userDbError || !userDb) {
+      toast.error('Usuário não encontrado no sistema. Contate o administrador.');
       await supabase.auth.signOut();
-      toast.error('Perfil não encontrado. Execute o schema do Supabase e tente novamente.');
       return false;
     }
 
@@ -267,67 +461,137 @@ export function useAppState() {
   };
 
   const registerUser = async (userData: Omit<User, 'id' | 'totalPoints' | 'isAdmin' | 'isPaid'>) => {
-    if (!ensureSupabaseReady('cadastrar usuário')) return false;
+    if (!ensureSupabaseReady('cadastrar usuário')) return { success: false, error: 'Supabase não configurado' };
+
+    if (state.settings.betsLocked) {
+      return { success: false, error: 'O Bolão está fechado para novos participantes.' };
+    }
 
     if ((userData.password || '').length < 6) {
-      toast.error('A senha deve ter pelo menos 6 caracteres.');
-      return false;
+      return { success: false, error: 'A senha deve ter pelo menos 6 caracteres.' };
     }
 
-    const { data: existingUser, error: existingUserError } = await supabase
-      .from('users').select('email').eq('email', userData.email).maybeSingle();
-
-    if (existingUserError) {
-      toast.error(`Erro ao validar e-mail: ${existingUserError.message}`);
-      return false;
-    }
-
-    if (existingUser) { toast.error('Este e-mail já está cadastrado.'); return false; }
-
-    const { count, error: countError } = await supabase
-      .from('users').select('*', { count: 'exact', head: true });
-
-    if (countError) {
-      toast.error(`Erro ao validar administradores: ${countError.message}`);
-      return false;
-    }
-
-    const isFirstUser = count === 0;
-
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email: userData.email,
-      password: userData.password || '',
-      options: {
-        data: {
-          name: userData.name,
-          photo_url: userData.photoUrl,
-          champion_prediction: userData.championPrediction,
-          is_admin: isFirstUser,
-          is_paid: isFirstUser,
+    // O signUp do Supabase Auth já rejeita e-mails duplicados nativamente,
+    // então não precisamos de consultas prévias à tabela users.
+    const result = await withRetry(
+      () => supabase.auth.signUp({
+        email: userData.email,
+        password: userData.password || '',
+        options: {
+          data: {
+            name: userData.name,
+            photo_url: userData.photoUrl,
+            champion_prediction: userData.championPrediction,
+          },
         },
-      },
-    });
+      }),
+      'cadastrar usuário'
+    );
+    if (!result) {
+      return {
+        success: false,
+        error: 'Nao foi possivel conectar ao Supabase agora. Verifique sua internet, VPN, firewall ou tente novamente em alguns segundos.',
+      };
+    }
+    const { data: authData, error: authError } = result;
 
     if (authError) {
-      toast.error(`Erro ao cadastrar usuário: ${authError.message}`);
-      return false;
+      console.error('Erro detalhado Supabase Auth:', authError);
+      // Traduzir mensagens comuns do Supabase Auth
+      if (authError.message.includes('already registered') || authError.message.includes('already been registered')) {
+        return { success: false, error: 'Este e-mail já está cadastrado.' };
+      }
+      return {
+        success: false,
+        error: getReadableSupabaseError(authError, `Erro ao cadastrar usu?rio: ${authError.message}`),
+      };
     }
 
     const userId = authData.user?.id;
     if (!userId) {
-      toast.error('Erro ao obter ID do usuário.');
-      return false;
+      return { success: false, error: 'Erro ao obter ID do usuário.' };
     }
 
-    await hydrateState(authData.session?.user.id ?? null);
+    // O Supabase faz login automático ao cadastrar se a confirmação de e-mail estiver desativada.
+    // Forçamos o logout para redirecionar à tela de login.
+    if (authData.session) {
+      try {
+        await supabase.auth.signOut();
+      } catch (e) {
+        console.error('Erro ao fazer logout após cadastro:', e);
+      }
+      setState(prev => ({ ...prev, currentUser: null }));
+    }
+
+    toast.success('Cadastro realizado com sucesso! Faça o login para continuar.');
+    return { success: true };
+  };
+
+  const registerUserAndRedirect = async (userData: Omit<User, 'id' | 'totalPoints' | 'isAdmin' | 'isPaid'>) => {
+    if (!ensureSupabaseReady('cadastrar usuÃ¡rio')) return { success: false, error: 'Supabase nÃ£o configurado' };
+
+    if (state.settings.betsLocked) {
+      return { success: false, error: 'O Bolão está fechado para novos participantes.' };
+    }
+
+    if ((userData.password || '').length < 6) {
+      return { success: false, error: 'A senha deve ter pelo menos 6 caracteres.' };
+    }
+
+    const result = await withRetry(
+      () => supabase.auth.signUp({
+        email: userData.email,
+        password: userData.password || '',
+        options: {
+          data: {
+            name: userData.name,
+            photo_url: userData.photoUrl,
+            champion_prediction: userData.championPrediction,
+          },
+        },
+      }),
+      'cadastrar usuÃ¡rio'
+    );
+
+    if (!result) {
+      return {
+        success: false,
+        error: 'Nao foi possivel conectar ao Supabase agora. Verifique sua internet, VPN, firewall ou tente novamente em alguns segundos.',
+      };
+    }
+
+    const { data: authData, error: authError } = result;
+
+    if (authError) {
+      console.error('Erro detalhado Supabase Auth:', authError);
+      if (authError.message.includes('already registered') || authError.message.includes('already been registered')) {
+        return { success: false, error: 'Este e-mail jÃ¡ estÃ¡ cadastrado.' };
+      }
+
+      return {
+        success: false,
+        error: getReadableSupabaseError(authError, `Erro ao cadastrar usuario: ${authError.message}`),
+      };
+    }
+
+    const userId = authData.user?.id;
+    if (!userId) {
+      return { success: false, error: 'Erro ao obter ID do usuÃ¡rio.' };
+    }
 
     if (authData.session) {
-      toast.success('Cadastro realizado com sucesso!');
-    } else {
-      toast.success('Cadastro criado. Se a confirmação de e-mail estiver ativa no Supabase, confirme seu e-mail antes do login.');
+      suppressAuthHydrationForUser.current = userId;
+      setState(prev => ({ ...prev, currentUser: null }));
+
+      try {
+        await supabase.auth.signOut();
+      } catch (error) {
+        console.warn('Não foi possível encerrar a sessão automática após o cadastro:', error);
+      }
     }
 
-    return true;
+    toast.success('Cadastro realizado com sucesso! Faça o login para continuar.');
+    return { success: true, autoLoggedIn: false };
   };
 
   const setEntryFee = async (fee: number) => {
@@ -353,11 +617,11 @@ export function useAppState() {
     const { data, error } = await supabase
       .from('bets')
       .upsert({
-        user_id:    state.currentUser.id,
-        match_id:   matchId,
+        user_id: state.currentUser.id,
+        match_id: matchId,
         home_score: homeScore,
         away_score: awayScore,
-        is_locked:  false,
+        is_locked: false,
       }, { onConflict: 'user_id,match_id' })
       .select()
       .single();
@@ -387,7 +651,7 @@ export function useAppState() {
       .update({ home_score: homeScore, away_score: awayScore, status: 'finished' })
       .eq('id', matchId);
 
-    if (matchError) { toast.error('Erro ao atualizar partida.'); return; }
+    if (matchError) { toast.error(`Erro ao atualizar partida: ${matchError.message}`); return; }
 
     const finishedMatch = state.matches.find(m => m.id === matchId);
     if (!finishedMatch) {
@@ -487,12 +751,12 @@ export function useAppState() {
     const { data, error } = await supabase
       .from('matches')
       .insert([{
-        home_team:     matchData.homeTeam,
-        away_team:     matchData.awayTeam,
-        group_name:    matchData.group,
-        date:          matchData.date,
-        status:        'scheduled',
-        location:      matchData.location,
+        home_team: matchData.homeTeam,
+        away_team: matchData.awayTeam,
+        group_name: matchData.group,
+        date: matchData.date,
+        status: 'scheduled',
+        location: matchData.location,
         home_flag_url: matchData.homeFlagUrl,
         away_flag_url: matchData.awayFlagUrl,
       }])
@@ -507,14 +771,14 @@ export function useAppState() {
     if (!ensureSupabaseReady('editar partida')) return;
 
     const payload: Record<string, any> = {};
-    if (matchData.homeTeam    !== undefined) payload.home_team     = matchData.homeTeam;
-    if (matchData.awayTeam    !== undefined) payload.away_team     = matchData.awayTeam;
-    if (matchData.group       !== undefined) payload.group_name    = matchData.group;
-    if (matchData.date        !== undefined) payload.date          = matchData.date;
-    if (matchData.status      !== undefined) payload.status        = matchData.status;
-    if (matchData.homeScore   !== undefined) payload.home_score    = matchData.homeScore;
-    if (matchData.awayScore   !== undefined) payload.away_score    = matchData.awayScore;
-    if (matchData.location    !== undefined) payload.location      = matchData.location;
+    if (matchData.homeTeam !== undefined) payload.home_team = matchData.homeTeam;
+    if (matchData.awayTeam !== undefined) payload.away_team = matchData.awayTeam;
+    if (matchData.group !== undefined) payload.group_name = matchData.group;
+    if (matchData.date !== undefined) payload.date = matchData.date;
+    if (matchData.status !== undefined) payload.status = matchData.status;
+    if (matchData.homeScore !== undefined) payload.home_score = matchData.homeScore;
+    if (matchData.awayScore !== undefined) payload.away_score = matchData.awayScore;
+    if (matchData.location !== undefined) payload.location = matchData.location;
     if (matchData.homeFlagUrl !== undefined) payload.home_flag_url = matchData.homeFlagUrl;
     if (matchData.awayFlagUrl !== undefined) payload.away_flag_url = matchData.awayFlagUrl;
 
@@ -534,7 +798,7 @@ export function useAppState() {
     setState(prev => ({
       ...prev,
       matches: prev.matches.filter(m => m.id !== matchId),
-      bets:    prev.bets.filter(b => b.matchId !== matchId),
+      bets: prev.bets.filter(b => b.matchId !== matchId),
     }));
   };
 
@@ -552,7 +816,7 @@ export function useAppState() {
     setState(prev => ({
       ...prev,
       users: prev.users.filter(u => u.id !== userId),
-      bets:  prev.bets.filter(b => b.userId !== userId),
+      bets: prev.bets.filter(b => b.userId !== userId),
     }));
 
     toast.success('Perfil removido. Para excluir também o usuário do Auth, use o painel do Supabase ou uma função administrativa.');
@@ -562,7 +826,7 @@ export function useAppState() {
     state,
     login,
     logout,
-    registerUser,
+    registerUser: registerUserAndRedirect,
     placeBet,
     updateMatchResult,
     togglePaymentStatus,

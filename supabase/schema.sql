@@ -143,6 +143,24 @@ alter table public.matches enable row level security;
 alter table public.bets enable row level security;
 alter table public.settings enable row level security;
 
+create or replace function public.delete_auth_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  delete from auth.users where id = old.id;
+  return old;
+end;
+$$;
+
+drop trigger if exists on_public_user_deleted on public.users;
+create trigger on_public_user_deleted
+after delete on public.users
+for each row
+execute function public.delete_auth_user();
+
 drop policy if exists "users_select_authenticated" on public.users;
 create policy "users_select_authenticated"
 on public.users

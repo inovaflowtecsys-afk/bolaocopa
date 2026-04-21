@@ -10,8 +10,8 @@ export const SCORING_RULES = {
 };
 
 export const calculatePoints = (bet: Bet, match: Match, isBetsLocked: boolean = false): number => {
-  // Pontos só são calculados se o bloqueio estiver ativo
-  if (!isBetsLocked) return 0;
+  // Pontos só são calculados se o bloqueio estiver ativo ou o jogo finalizado
+  if (!isBetsLocked && match.status !== 'finished') return 0;
   
   if (match.homeScore === undefined || match.awayScore === undefined) return 0;
 

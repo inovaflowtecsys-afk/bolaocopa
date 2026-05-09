@@ -1,0 +1,15 @@
+[Unit]
+Description=Bolao da Copa API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/bolaocopa/current
+ExecStart=/usr/bin/npm run start:server
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=PORT=4000
+
+[Install]
+WantedBy=multi-user.target

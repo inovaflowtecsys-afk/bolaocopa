@@ -17,6 +17,7 @@ function mapUser(row: Record<string, any>): User {
     championPrediction: row.champion_prediction ?? '',
     isPaid: row.is_paid ?? false,
     isAdmin: row.is_admin ?? false,
+    senhaProvisoria: row.senha_provisoria ?? false,
     totalPoints: row.total_points ?? 0,
   };
 }
@@ -94,6 +95,7 @@ function mapAuthUser(authUser: { id: string; email?: string; user_metadata?: Rec
     championPrediction: authUser.user_metadata?.champion_prediction ?? '',
     isPaid: false,
     isAdmin: false,
+    senhaProvisoria: false,
     totalPoints: 0,
   };
 }

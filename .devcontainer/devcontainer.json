@@ -1,0 +1,14 @@
+{
+  "name": "Bolaodacopa Dev Container",
+  "dockerFile": "../Dockerfile",
+  "appPort": [5173],
+  "settings": {
+    "terminal.integrated.shell.linux": "/bin/bash"
+  },
+  "extensions": [
+    "ms-azuretools.vscode-docker",
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint"
+  ],
+  "postCreateCommand": "npm install"
+}

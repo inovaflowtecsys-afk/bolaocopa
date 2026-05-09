@@ -8,6 +8,9 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import ResetPasswordButton from '@/components/admin/ResetPasswordButton';
+import ChangePasswordModal from '@/components/auth/ChangePasswordModal';
+import ForceChangePasswordModal from '@/components/auth/ForceChangePasswordModal';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Toaster } from '@/components/ui/sonner';
@@ -21,6 +24,8 @@ import { isSupabaseConfigured, supabaseConfigError } from './lib/supabase';
 import { supabase } from './lib/supabase';
 
 export default function App() {
+      const [forceChangeOpen, setForceChangeOpen] = React.useState(false);
+    const [isChangePasswordOpen, setIsChangePasswordOpen] = React.useState(false);
   const appInfoLabel = `Inovaflowtec v${__APP_VERSION__} - ${__BUILD_DATE__}`;
   const whatsappGroupUrl = 'https://chat.whatsapp.com/Bwugcg5uij29gB644uZVJO?mode=gi_t';
 
@@ -75,9 +80,18 @@ export default function App() {
 
     setIsRegistering(false);
     setIsForgotPassword(false);
-    setIsResetPassword(false);
     setActiveTab('matches');
-  }, [currentUser]);
+    if (isResetPassword) {
+      setForceChangeOpen(false);
+      return;
+    }
+    // Checagem de senha provisória
+    if (currentUser?.senhaProvisoria) {
+      setForceChangeOpen(true);
+    } else {
+      setForceChangeOpen(false);
+    }
+  }, [currentUser, isResetPassword]);
 
   React.useEffect(() => {
     const hasRecoveryHash = window.location.hash.includes('type=recovery');
@@ -262,7 +276,7 @@ export default function App() {
     }
 
     const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
-      redirectTo: `${window.location.origin}${window.location.pathname}`,
+      redirectTo: 'http://192.168.1.14:3000/',
     });
 
     if (error) {
@@ -795,7 +809,9 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans pb-20 md:pb-0 relative overflow-hidden">
+    <div className={`min-h-screen bg-slate-50 font-sans pb-20 md:pb-0 relative overflow-hidden${forceChangeOpen ? ' overflow-hidden fixed w-full h-full' : ''}`}>
+        {/* Modal obrigatório de troca de senha provisória */}
+        <ForceChangePasswordModal open={forceChangeOpen} onChangeSuccess={() => setForceChangeOpen(false)} />
       {/* Background Image with Transparency */}
       <div 
         className="fixed inset-0 z-0 opacity-5 pointer-events-none"
@@ -889,6 +905,9 @@ export default function App() {
                 </Badge>
                 <span className="text-xs font-bold text-green-600">{currentUser?.totalPoints} pts</span>
               </div>
+              <Button variant="link" size="sm" className="p-0 mt-1 text-blue-700 hover:underline" onClick={() => setIsChangePasswordOpen(true)}>
+                Alterar Senha
+              </Button>
             </div>
           <Avatar className="h-10 w-10 border-2 border-slate-100">
             <AvatarImage src={currentUser?.photoUrl} />
@@ -897,6 +916,7 @@ export default function App() {
           <Button variant="ghost" size="icon" onClick={logout} className="text-slate-500">
             <LogOut className="w-5 h-5" />
           </Button>
+          <ChangePasswordModal open={isChangePasswordOpen} onClose={() => setIsChangePasswordOpen(false)} />
         </div>
       </header>
 
@@ -1692,7 +1712,7 @@ export default function App() {
                           </div>
 
                           {/* Ações */}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 w-full xl:w-auto">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 w-full xl:w-auto">
                             {user.id !== currentUser?.id && (
                               <Button
                                 variant="destructive"
@@ -1722,6 +1742,9 @@ export default function App() {
                               >
                                 {user.isAdmin ? 'Remover Admin' : 'Tornar Admin'}
                               </Button>
+                            )}
+                            {user.id !== currentUser?.id && (
+                              <ResetPasswordButton userId={user.id} userName={user.name} />
                             )}
                             <Button
                               variant={user.isPaid ? "outline" : "default"}

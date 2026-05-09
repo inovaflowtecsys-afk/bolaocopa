@@ -8,6 +8,7 @@ export interface User {
   championPrediction: string;
   isPaid: boolean;
   isAdmin: boolean;
+  senhaProvisoria?: boolean;
   totalPoints: number;
 }
 

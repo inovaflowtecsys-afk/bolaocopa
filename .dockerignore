@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.github
+.devcontainer
+test-results
+tests
+*.log
+.env
+.env.local
+.vite-dev.out.log
+.vite-dev.err.log

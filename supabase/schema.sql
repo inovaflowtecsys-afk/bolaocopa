@@ -19,6 +19,7 @@ create table if not exists public.users (
   is_paid boolean not null default false,
   is_admin boolean not null default false,
   total_points integer not null default 0,
+  senha_provisoria boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

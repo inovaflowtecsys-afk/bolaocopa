@@ -1,13 +1,14 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.1.10",
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
-    "prebuild": "npm version patch --no-git-tag-version",
+    "prebuild": "node -e \"console.log('keeping version 1.1.10')\"",
     "build": "vite build",
     "preview": "vite preview",
+    "start:server": "node server.js",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "test:e2e": "playwright test"
@@ -23,7 +24,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "dotenv": "^17.4.2",
-    "express": "^4.21.2",
+    "express": "^4.22.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.38.0",
     "next-themes": "^0.4.6",

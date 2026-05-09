@@ -1,0 +1,4 @@
+ssh root@129.121.53.213 -p 22022
+INF2026inf@
+app.bolaocopa.inovaflowtec.com.br.
+http://129.121.53.213:8091/

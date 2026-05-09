@@ -22,6 +22,7 @@ import { GROUPS, COUNTRIES, SCORING_RULES, calculatePoints } from './constants';
 import { Match, User, Bet } from './types';
 import { isSupabaseConfigured, supabaseConfigError } from './lib/supabase';
 import { supabase } from './lib/supabase';
+import { datetimeLocalToIso, formatMatchDate, isoToDatetimeLocal } from './lib/matchDate';
 
 export default function App() {
       const [forceChangeOpen, setForceChangeOpen] = React.useState(false);
@@ -340,7 +341,7 @@ export default function App() {
     const matchData = {
       homeTeam:    newMatch.homeTeam,
       awayTeam:    newMatch.awayTeam,
-      date:        newMatch.date,
+      date:        datetimeLocalToIso(newMatch.date),
       group:       newMatch.group,
       location:    newMatch.location,
       homeFlagUrl: newMatch.homeFlagUrl,
@@ -372,7 +373,7 @@ export default function App() {
     setNewMatch({
       homeTeam: match.homeTeam,
       awayTeam: match.awayTeam,
-      date: match.date.substring(0, 16), // Format for datetime-local input
+      date: isoToDatetimeLocal(match.date),
       group: match.group,
       location: match.location || '',
       homeFlagUrl: match.homeFlagUrl || '',
@@ -1185,7 +1186,7 @@ export default function App() {
                           <div className="bg-slate-50 px-4 py-2 flex justify-between items-center border-b">
                             <div className="flex flex-col">
                               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                                Grupo {match.group} • {new Date(match.date).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                Grupo {match.group} • {formatMatchDate(match.date)}
                               </span>
                               {match.location && (
                                 <span className="text-[9px] text-slate-400 flex items-center gap-1">
@@ -2114,7 +2115,7 @@ export default function App() {
                                 <div className="flex items-center gap-2">
                                   <span className="text-[10px] font-bold text-slate-400 uppercase">Grupo {match.group}</span>
                                   <span className="text-[9px] text-slate-300">•</span>
-                                  <span className="text-[9px] text-slate-400">{new Date(match.date).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                                  <span className="text-[9px] text-slate-400">{formatMatchDate(match.date)}</span>
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <Button 

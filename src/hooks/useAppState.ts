@@ -766,7 +766,11 @@ export function useAppState() {
       .single();
 
     if (error) { toast.error(`Erro ao adicionar partida: ${error.message}`); return; }
-    setState(prev => ({ ...prev, matches: [...prev.matches, mapMatch(data)] }));
+    setState(prev => {
+      const matches = [...prev.matches, mapMatch(data)];
+      cacheMatches(matches);
+      return { ...prev, matches };
+    });
   };
 
   const updateMatch = async (matchId: string, matchData: Partial<Match>) => {
@@ -786,10 +790,14 @@ export function useAppState() {
 
     const { error } = await supabase.from('matches').update(payload).eq('id', matchId);
     if (error) { toast.error('Erro ao atualizar partida.'); return; }
-    setState(prev => ({
-      ...prev,
-      matches: prev.matches.map(m => m.id === matchId ? { ...m, ...matchData } : m),
-    }));
+    setState(prev => {
+      const matches = prev.matches.map(m => m.id === matchId ? { ...m, ...matchData } : m);
+      cacheMatches(matches);
+      return {
+        ...prev,
+        matches,
+      };
+    });
   };
 
   const deleteMatch = async (matchId: string) => {
@@ -797,11 +805,15 @@ export function useAppState() {
 
     const { error } = await supabase.from('matches').delete().eq('id', matchId);
     if (error) { toast.error('Erro ao deletar partida.'); return; }
-    setState(prev => ({
-      ...prev,
-      matches: prev.matches.filter(m => m.id !== matchId),
-      bets: prev.bets.filter(b => b.matchId !== matchId),
-    }));
+    setState(prev => {
+      const matches = prev.matches.filter(m => m.id !== matchId);
+      cacheMatches(matches);
+      return {
+        ...prev,
+        matches,
+        bets: prev.bets.filter(b => b.matchId !== matchId),
+      };
+    });
   };
 
   const deleteUser = async (userId: string) => {

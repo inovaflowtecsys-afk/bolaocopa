@@ -19,11 +19,10 @@ jobs:
           password: ${{ secrets.VPS_PASSWORD }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd /opt/apps/bolaocopa
-            git reset --hard HEAD
+            cd /var/www/bolaocopa/current
             git pull origin main
-            npm install
+            npm ci
             npm run build
-            rm -rf /usr/share/nginx/html/*
-            cp -r dist/* /usr/share/nginx/html/
+            systemctl restart bolaocopa
+            nginx -t
             systemctl reload nginx

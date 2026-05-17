@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
-import { Trophy, Users, DollarSign, Calendar, Shield, LogOut, UserPlus, Filter, Lock, Unlock, Pencil, Trash2, PieChart as PieChartIcon, Eye, EyeOff, MessageCircle } from 'lucide-react';
+import { Trophy, Users, DollarSign, Calendar, Shield, LogOut, UserPlus, Filter, Lock, Unlock, Pencil, Trash2, PieChart as PieChartIcon, Eye, EyeOff, MessageCircle, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
 import { GROUPS, COUNTRIES, SCORING_RULES, calculatePoints } from './constants';
@@ -24,10 +24,15 @@ import { isSupabaseConfigured, supabaseConfigError } from './lib/supabase';
 import { supabase } from './lib/supabase';
 import { datetimeLocalToIso, formatMatchDate, isoToDatetimeLocal } from './lib/matchDate';
 
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+};
+
 export default function App() {
       const [forceChangeOpen, setForceChangeOpen] = React.useState(false);
     const [isChangePasswordOpen, setIsChangePasswordOpen] = React.useState(false);
-  const appInfoLabel = `Inovaflowtec v${__APP_VERSION__} - ${__BUILD_DATE__}`;
+  const appInfoLabel = 'InovaFlowTec v1.1.15 17/05/2026';
   const whatsappGroupUrl = 'https://chat.whatsapp.com/Bwugcg5uij29gB644uZVJO?mode=gi_t';
 
   const { state, login, logout, registerUser, placeBet, updateMatchResult, togglePaymentStatus, toggleAdminStatus, toggleBetsLock, addMatch, updateMatch, deleteMatch, deleteUser, setEntryFee, setYear, setLogoUrl, setPrizeSettings, resetState } = useAppState();
@@ -57,18 +62,22 @@ export default function App() {
   const [isPendingBetsOpen, setIsPendingBetsOpen] = React.useState(false);
   const [loginError, setLoginError] = React.useState<string | null>(null);
   const [isWinnerModalOpen, setIsWinnerModalOpen] = React.useState(false);
+  const [isScoringRulesOpen, setIsScoringRulesOpen] = React.useState(false);
+  const [installPromptEvent, setInstallPromptEvent] = React.useState<BeforeInstallPromptEvent | null>(null);
+  const [isStandalone, setIsStandalone] = React.useState(false);
   const [prizeForm, setPrizeForm] = React.useState(state.settings.prizes);
   const [newMatch, setNewMatch] = React.useState({ 
     homeTeam: '', 
     awayTeam: '', 
     date: '', 
-    group: 'A',
+    group: GROUPS[0] ?? 'A',
     location: '',
     homeFlagUrl: '',
     awayFlagUrl: ''
   });
 
   const currentUser = state.currentUser;
+  const canInstallApp = !!installPromptEvent && !isStandalone;
 
   React.useEffect(() => {
     if (currentUser && !currentUser.isAdmin && (activeTab === 'users' || activeTab === 'admin')) {
@@ -114,6 +123,49 @@ export default function App() {
       listener.subscription.unsubscribe();
     };
   }, []);
+
+  React.useEffect(() => {
+    const standaloneMediaQuery = window.matchMedia('(display-mode: standalone)');
+    const updateStandaloneState = () => {
+      const isNavigatorStandalone = 'standalone' in window.navigator && Boolean((window.navigator as Navigator & { standalone?: boolean }).standalone);
+      setIsStandalone(standaloneMediaQuery.matches || isNavigatorStandalone);
+    };
+
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPromptEvent(event as BeforeInstallPromptEvent);
+    };
+
+    const handleAppInstalled = () => {
+      setInstallPromptEvent(null);
+      setIsStandalone(true);
+      toast.success('Aplicativo instalado com sucesso.');
+    };
+
+    updateStandaloneState();
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+    standaloneMediaQuery.addEventListener('change', updateStandaloneState);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+      standaloneMediaQuery.removeEventListener('change', updateStandaloneState);
+    };
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!installPromptEvent) return;
+
+    await installPromptEvent.prompt();
+    const { outcome } = await installPromptEvent.userChoice;
+
+    if (outcome === 'accepted') {
+      toast.success('Instalação iniciada.');
+    }
+
+    setInstallPromptEvent(null);
+  };
 
   const filteredMatches = state.matches
     .filter(m => groupFilter === 'all' || m.group === groupFilter)
@@ -169,15 +221,23 @@ export default function App() {
   };
 
   const usersWithPendingBets = state.users.map(user => {
-    const scheduledMatches = state.matches.filter(m => m.status === 'scheduled');
-    const userBetsOnScheduled = state.bets.filter(b => 
-      b.userId === user.id && scheduledMatches.some(m => m.id === b.matchId)
-    ).length;
+    const placedCount = state.bets.filter(b => b.userId === user.id).length;
     return {
       ...user,
-      pendingCount: Math.max(0, scheduledMatches.length - userBetsOnScheduled)
+      placedCount,
+      pendingCount: Math.max(0, totalMatches - placedCount),
     };
   });
+
+  const userBetSummaryById = new Map(
+    usersWithPendingBets.map(user => [
+      user.id,
+      {
+        placedCount: user.placedCount,
+        pendingCount: user.pendingCount,
+      },
+    ])
+  );
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -360,7 +420,7 @@ export default function App() {
       homeTeam: '', 
       awayTeam: '', 
       date: '', 
-      group: 'A',
+      group: GROUPS[0] ?? 'A',
       location: '',
       homeFlagUrl: '',
       awayFlagUrl: ''
@@ -519,6 +579,16 @@ export default function App() {
                     'Entrar'
                   )}
                 </Button>
+                {canInstallApp && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full h-11 gap-2"
+                    onClick={handleInstallApp}
+                  >
+                    <Download className="w-4 h-4" /> Instalar aplicativo
+                  </Button>
+                )}
                 <Button
                   type="button"
                   variant="ghost"
@@ -534,7 +604,7 @@ export default function App() {
               </div>
             </form>
             
-            <div className="relative">
+            <div className="relative" hidden={state.settings.betsLocked}>
               <div className="absolute inset-0 flex items-center">
                 <span className="w-full border-t" />
               </div>
@@ -558,9 +628,9 @@ export default function App() {
               </Button>
             )}
             <div className="flex flex-col items-center gap-1 pt-2">
-              <Button variant="link" size="sm" className="text-[10px] text-slate-400" onClick={resetState}>
+              <span className="text-[10px] text-slate-400">
                 {appInfoLabel}
-              </Button>
+              </span>
               <a
                 href="http://www.inovaflowtec.com.br"
                 target="_blank"
@@ -682,6 +752,30 @@ export default function App() {
   }
 
   if (isRegistering) {
+    if (state.settings.betsLocked) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans">
+          <Card className="w-full max-w-md border-none shadow-xl">
+            <CardHeader>
+              <CardTitle className="text-2xl font-bold">Novo Cadastro</CardTitle>
+              <CardDescription>O cadastro de novos participantes estÃ¡ indisponÃ­vel no momento.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900 text-center font-medium">
+                <Lock className="w-4 h-4 inline-block mr-2 -mt-1" />
+                O BolÃ£o estÃ¡ bloqueado para novos cadastros.
+              </div>
+            </CardContent>
+            <CardFooter className="border-t border-slate-100 pt-4">
+              <Button type="button" variant="ghost" className="w-full" onClick={() => setIsRegistering(false)}>
+                Voltar ao login
+              </Button>
+            </CardFooter>
+          </Card>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans">
         <Card className="w-full max-w-md border-none shadow-xl">
@@ -946,6 +1040,16 @@ export default function App() {
               </h3>
             </div>
             <CardContent className="p-4 space-y-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="space-y-1">
+                  <p className="text-sm font-bold text-slate-900">Regras de pontuação</p>
+                  <p className="text-xs text-slate-600">Consulte como os pontos são calculados em cada jogo.</p>
+                </div>
+                <Button variant="outline" className="mt-3 w-full gap-2" onClick={() => setIsScoringRulesOpen(true)}>
+                  <Trophy className="w-4 h-4" /> Ver regras
+                </Button>
+              </div>
+
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-slate-600">
                   <Users className="w-4 h-4" />
@@ -1117,8 +1221,23 @@ export default function App() {
               </div>
             </CardContent>
           </Card>
+          {canInstallApp && (
+            <Card className="border-none shadow-md bg-gradient-to-r from-slate-900 to-slate-800 text-white">
+              <CardContent className="py-4 px-4 sm:px-6">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold">Instale o app no seu aparelho</p>
+                    <p className="text-xs text-slate-300">Abra o bolão em tela cheia e acesse mais rápido direto da tela inicial.</p>
+                  </div>
+                  <Button variant="secondary" className="w-full sm:w-auto gap-2" onClick={handleInstallApp}>
+                    <Download className="w-4 h-4" /> Instalar app
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <div className="flex items-center justify-between mb-6">
+            <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between">
               <div className="hidden md:block">
                 <TabsList className="bg-white border shadow-sm">
                   <TabsTrigger value="matches" className="gap-2">
@@ -1140,21 +1259,87 @@ export default function App() {
                 </TabsList>
               </div>
 
-              <div className="md:hidden">
+              <div className="w-full md:hidden space-y-4">
                 <h2 className="text-2xl font-black text-slate-900 flex items-center gap-2">
                   {activeTab === 'matches' && <><Calendar className="w-6 h-6 text-slate-900" /> Jogos</>}
                   {activeTab === 'ranking' && <><Trophy className="w-6 h-6 text-slate-900" /> Ranking</>}
                   {activeTab === 'users' && <><Users className="w-6 h-6 text-slate-900" /> Usuários</>}
                   {activeTab === 'admin' && <><Shield className="w-6 h-6 text-slate-900" /> Gestão</>}
                 </h2>
+                <div className="w-full overflow-hidden rounded-3xl border border-slate-900/10 bg-gradient-to-br from-amber-100 via-white to-emerald-50 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.10)]">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-2">
+                      <div className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-[10px] font-black uppercase tracking-[0.24em] text-white">
+                        <Trophy className="w-3 h-3" />
+                        Pontuação
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-base font-black text-slate-900">Regras de pontuação</p>
+                        <p className="max-w-[240px] text-xs leading-relaxed text-slate-600">Consulte a tabela de pontos também no celular e tablet.</p>
+                      </div>
+                    </div>
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/80 shadow-sm ring-1 ring-slate-900/5">
+                      <Trophy className="w-5 h-5 text-amber-500" />
+                    </div>
+                  </div>
+                  <Button className="mt-4 w-full justify-between rounded-2xl bg-slate-900 text-white hover:bg-slate-800" onClick={() => setIsScoringRulesOpen(true)}>
+                    <span className="flex items-center gap-2">
+                      <Trophy className="w-4 h-4" /> Ver regras
+                    </span>
+                    <span className="text-xs font-bold uppercase tracking-[0.2em] text-white/70">Abrir</span>
+                  </Button>
+                </div>
+                {activeTab === 'matches' && (
+                  <div className="w-full space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                        <Filter className="w-4 h-4 text-slate-400" />
+                        <span>Filtrar grupos</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setGroupFilter('all')}
+                        className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] transition-all ${
+                          groupFilter === 'all'
+                            ? 'border-slate-900 bg-slate-900 text-white shadow-lg shadow-slate-900/20'
+                            : 'border-slate-200 bg-white text-slate-500'
+                        }`}
+                      >
+                        Todos
+                      </button>
+                    </div>
+                    <div className="w-full rounded-3xl border border-slate-200/80 bg-white/70 p-3 shadow-sm">
+                      <div className="grid grid-cols-6 gap-2">
+                        {GROUPS.map(g => {
+                          const isActive = groupFilter === g;
+                          return (
+                            <button
+                              key={g}
+                              type="button"
+                              onClick={() => setGroupFilter(g)}
+                              aria-pressed={isActive}
+                              className={`flex h-11 w-11 justify-self-center items-center justify-center rounded-full border text-sm font-black transition-all duration-200 ${
+                                isActive
+                                  ? 'scale-105 border-amber-300 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 text-white shadow-[0_12px_24px_rgba(15,23,42,0.28)] ring-4 ring-amber-100'
+                                  : 'border-slate-200 bg-white text-slate-700 shadow-sm'
+                              }`}
+                            >
+                              {g}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {activeTab === 'matches' && (
-                <div className="flex items-center gap-2">
+                <div className="hidden md:flex items-center gap-2">
                   <Filter className="w-4 h-4 text-slate-400" />
                   <Select value={groupFilter} onValueChange={setGroupFilter}>
                     <SelectTrigger className="w-[120px] h-9 bg-white">
-                      <SelectValue placeholder="Grupo" />
+                      <SelectValue placeholder="Todos" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Todos Grupos</SelectItem>
@@ -1324,7 +1509,7 @@ export default function App() {
                               </div>
 
                               <Dialog open={viewingBetsMatch?.id === match.id} onOpenChange={(open) => !open && setViewingBetsMatch(null)}>
-                                <DialogContent className="sm:max-w-[500px] max-h-[80vh] flex flex-col p-0 overflow-hidden border-none shadow-2xl">
+                                <DialogContent className="sm:max-w-[500px] h-[80vh] flex flex-col p-0 overflow-hidden border-none shadow-2xl">
                                   <DialogHeader className="p-6 bg-slate-900 text-white">
                                     <DialogTitle className="text-xl font-black flex items-center gap-2">
                                       <Users className="w-5 h-5 text-yellow-400" /> Palpites: {match.homeTeam} vs {match.awayTeam}
@@ -1333,8 +1518,8 @@ export default function App() {
                                       Confira o que cada participante apostou para este jogo
                                     </CardDescription>
                                   </DialogHeader>
-                                  <ScrollArea className="flex-1 p-6">
-                                    <div className="space-y-4">
+                                  <div className="flex-1 overflow-y-auto px-6 py-6">
+                                    <div className="space-y-4 pr-2">
                                       {state.users.map(user => {
                                         const bet = state.bets.find(b => b.userId === user.id && b.matchId === match.id);
                                         const officialResultText = match.homeScore !== undefined && match.awayScore !== undefined
@@ -1390,8 +1575,8 @@ export default function App() {
                                         );
                                       })}
                                     </div>
-                                  </ScrollArea>
-                                  <div className="p-4 bg-slate-50 border-t text-center">
+                                  </div>
+                                  <div className="shrink-0 p-4 bg-slate-50 border-t text-center">
                                     <Button variant="outline" className="w-full" onClick={() => setViewingBetsMatch(null)}>
                                       Fechar
                                     </Button>
@@ -1686,7 +1871,9 @@ export default function App() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="p-4 space-y-3">
-                    {state.users.map(user => (
+                    {state.users.map(user => {
+                      const betSummary = userBetSummaryById.get(user.id) ?? { placedCount: 0, pendingCount: totalMatches };
+                      return (
                       <div key={user.id} className="p-3 rounded-lg border bg-slate-50 hover:bg-slate-100 transition-colors">
                         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_auto_auto] gap-3 xl:items-center">
                           {/* Avatar + Nome + Email */}
@@ -1698,6 +1885,9 @@ export default function App() {
                             <div className="min-w-0">
                               <p className="font-semibold text-sm text-slate-800 whitespace-nowrap overflow-hidden text-ellipsis">{user.name}</p>
                               <p className="text-xs text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">{user.email}</p>
+                              <p className="text-[11px] text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis">
+                                Palpites {betSummary.placedCount}/{totalMatches}
+                              </p>
                             </div>
                           </div>
 
@@ -1758,7 +1948,7 @@ export default function App() {
                           </div>
                         </div>
                       </div>
-                    ))}
+                    )})}
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -1797,7 +1987,6 @@ export default function App() {
                           <ScrollArea className="flex-1 p-6 pt-2">
                             <div className="space-y-3">
                               {usersWithPendingBets
-                                .filter(u => !u.isAdmin)
                                 .sort((a, b) => b.pendingCount - a.pendingCount)
                                 .map(user => (
                                   <div key={user.id} className="flex items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-100 hover:bg-slate-100 transition-colors">
@@ -1807,8 +1996,9 @@ export default function App() {
                                         <AvatarFallback>P</AvatarFallback>
                                       </Avatar>
                                       <div className="flex flex-col">
-                                        <span className="text-sm font-bold text-slate-900">Participante</span>
+                                        <span className="text-sm font-bold text-slate-900">{user.name}</span>
                                         <span className="text-xs text-slate-500">{user.email}</span>
+                                        <span className="text-[11px] text-slate-400">Palpites {user.placedCount}/{totalMatches}</span>
                                       </div>
                                     </div>
                                     
@@ -1845,7 +2035,7 @@ export default function App() {
                     <CardContent>
                       <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
                         <div className="flex-1">
-                          <p className="text-sm text-slate-600">Existem <span className="font-bold text-slate-900">{usersWithPendingBets.filter(u => u.pendingCount > 0 && !u.isAdmin).length}</span> participantes com palpites pendentes.</p>
+                          <p className="text-sm text-slate-600">Existem <span className="font-bold text-slate-900">{usersWithPendingBets.filter(u => u.pendingCount > 0).length}</span> participantes com palpites pendentes.</p>
                         </div>
                         <Badge variant="outline" className="bg-white">Total Jogos: {totalMatches}</Badge>
                       </div>
@@ -1998,7 +2188,7 @@ export default function App() {
                               homeTeam: '', 
                               awayTeam: '', 
                               date: '', 
-                              group: 'A',
+                              group: GROUPS[0] ?? 'A',
                               location: '',
                               homeFlagUrl: '',
                               awayFlagUrl: ''
@@ -2093,7 +2283,7 @@ export default function App() {
                         </Dialog>
                         <Select value={adminMatchFilter} onValueChange={setAdminMatchFilter}>
                           <SelectTrigger className="w-[100px] h-8 text-xs">
-                            <SelectValue placeholder="Grupo" />
+                            <SelectValue placeholder="Todos" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">Todos</SelectItem>
@@ -2265,6 +2455,40 @@ export default function App() {
               </Button>
             </div>
           </motion.div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isScoringRulesOpen} onOpenChange={setIsScoringRulesOpen}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Regras de Pontuação</DialogTitle>
+            <CardDescription>Entenda como os pontos do bolão são calculados.</CardDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2 text-sm text-slate-700">
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+              <p className="font-bold text-emerald-900">20 pontos</p>
+              <p>Acertar o placar exato do jogo.</p>
+            </div>
+            <div className="rounded-lg border border-sky-200 bg-sky-50 p-3">
+              <p className="font-bold text-sky-900">10 pontos</p>
+              <p>Acertar que o jogo terminou empatado, mas com placar diferente do real.</p>
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <p className="font-bold text-amber-900">5 pontos</p>
+              <p>Acertar apenas o vencedor da partida.</p>
+            </div>
+            <div className="rounded-lg border border-violet-200 bg-violet-50 p-3">
+              <p className="font-bold text-violet-900">2 pontos</p>
+              <p>Acertar o placar invertido entre mandante e visitante.</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <p className="font-bold text-slate-900">0 pontos</p>
+              <p>Qualquer outro resultado diferente das regras acima.</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-500">
+              Os pontos só são contabilizados quando o jogo é finalizado ou quando o bloqueio de palpites estiver ativo.
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 

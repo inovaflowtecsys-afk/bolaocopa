@@ -36,7 +36,16 @@ export const calculatePoints = (bet: Bet, match: Match, isBetsLocked: boolean = 
   return SCORING_RULES.NONE;
 };
 
-export const GROUPS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+const createGroupRange = (start: string, end: string) => {
+  const startCode = start.toUpperCase().charCodeAt(0);
+  const endCode = end.toUpperCase().charCodeAt(0);
+
+  return Array.from({ length: endCode - startCode + 1 }, (_, index) =>
+    String.fromCharCode(startCode + index),
+  );
+};
+
+export const GROUPS = createGroupRange('A', 'L');
 
 export const COUNTRIES = [
   { name: 'Brasil', flag: '🇧🇷' },

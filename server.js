@@ -1,10 +1,15 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
+import ws from 'ws';
 
 // Carrega variáveis de ambiente locais antes do servidor subir.
 dotenv.config({ path: '.env' });
 dotenv.config({ path: '.env.local', override: true });
+
+if (!globalThis.WebSocket) {
+  globalThis.WebSocket = ws;
+}
 
 
 const app = express();

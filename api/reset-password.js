@@ -1,4 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
+import ws from 'ws';
+
+if (!globalThis.WebSocket) {
+  globalThis.WebSocket = ws;
+}
 
 export default async function handler(req, res) {
   try {

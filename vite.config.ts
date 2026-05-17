@@ -3,9 +3,15 @@ import react from '@vitejs/plugin-react';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { createClient } from '@supabase/supabase-js';
+import { VitePWA } from 'vite-plugin-pwa';
+import ws from 'ws';
 import {defineConfig, loadEnv} from 'vite';
 
 const RESET_PASSWORD = '0102bolaoCop@';
+
+if (!globalThis.WebSocket) {
+  globalThis.WebSocket = ws as unknown as typeof globalThis.WebSocket;
+}
 
 const readJsonBody = async (req: import('node:http').IncomingMessage) => {
   const chunks: Uint8Array[] = [];
@@ -100,7 +106,7 @@ export default defineConfig(({mode}) => {
   const env = loadEnv(mode, __dirname, '');
   const packageJson = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8')) as { version?: string };
   const appVersion = packageJson.version ?? '0.0.0';
-  const buildDate = new Date().toLocaleDateString('pt-BR');
+  const buildDate = '16/05/2026';
 
   const repository = env.GITHUB_REPOSITORY;
   const isGitHubPagesBuild = env.GITHUB_ACTIONS === 'true' && Boolean(repository);
@@ -115,7 +121,87 @@ export default defineConfig(({mode}) => {
 
   return {
     base,
-    plugins: [react(), tailwindcss(), createResetPasswordPlugin(env)],
+    plugins: [
+      react(),
+      tailwindcss(),
+      createResetPasswordPlugin(env),
+      VitePWA({
+        registerType: 'autoUpdate',
+        includeAssets: [
+          'favicon.svg',
+          'apple-touch-icon.png',
+          'pwa-192x192.png',
+          'pwa-512x512.png',
+          'maskable-icon-512x512.png',
+        ],
+        manifest: {
+          id: base,
+          name: `Bolão da Copa ${env.VITE_APP_YEAR || '2026'}`,
+          short_name: 'Bolão da Copa',
+          description: 'Bolão da Copa com palpites, ranking e pontuação em tempo real.',
+          theme_color: '#0f172a',
+          background_color: '#f8fafc',
+          display: 'standalone',
+          orientation: 'portrait',
+          scope: base,
+          start_url: base,
+          lang: 'pt-BR',
+          icons: [
+            {
+              src: 'pwa-192x192.png',
+              sizes: '192x192',
+              type: 'image/png',
+            },
+            {
+              src: 'pwa-512x512.png',
+              sizes: '512x512',
+              type: 'image/png',
+            },
+            {
+              src: 'maskable-icon-512x512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'maskable',
+            },
+          ],
+        },
+        workbox: {
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+          navigateFallback: 'index.html',
+          runtimeCaching: [
+            {
+              urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'supabase-api',
+                networkTimeoutSeconds: 10,
+                expiration: {
+                  maxEntries: 50,
+                  maxAgeSeconds: 60 * 60 * 24,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: /^https:\/\/.*\.(png|jpg|jpeg|svg|webp|woff2)$/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'static-assets',
+                expiration: {
+                  maxEntries: 60,
+                  maxAgeSeconds: 60 * 60 * 24 * 30,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+          ],
+        },
+      }),
+    ],
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
       __BUILD_DATE__: JSON.stringify(buildDate),

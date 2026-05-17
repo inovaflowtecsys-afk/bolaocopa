@@ -19,8 +19,13 @@ jobs:
           password: ${{ secrets.VPS_PASSWORD }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd /var/www/bolaocopa/current
-            git pull origin main
+            set -eu
+            cd /root/bolaocopa
+            git fetch origin
+            git checkout main
+            git reset --hard origin/main
+            rsync -a --delete --exclude .git --exclude node_modules --exclude dist --exclude .env.local /root/bolaocopa/ /var/www/bolaocopa/bolaocopa/
+            cd /var/www/bolaocopa/bolaocopa
             npm ci
             npm run build
             systemctl restart bolaocopa

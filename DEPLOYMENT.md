@@ -3,7 +3,8 @@
 ## Visao geral
 
 Nesse modo de deploy:
-- o frontend gerado pelo Vite fica em `/var/www/bolaocopa/current/dist`
+- o codigo sincronizado para producao fica em `/var/www/bolaocopa/bolaocopa`
+- o frontend gerado pelo Vite fica em `/var/www/bolaocopa/bolaocopa/dist`
 - o backend administrativo (`/api/reset-password`) roda em Node na porta `4000`
 - o Nginx faz HTTPS, serve o frontend e encaminha `/api/*` para o Node
 
@@ -23,7 +24,8 @@ systemctl enable --now nginx
 Crie a pasta da aplicacao:
 
 ```sh
-mkdir -p /var/www/bolaocopa/current
+mkdir -p /var/www/bolaocopa/bolaocopa
+git clone https://github.com/inovaflowtecsys-afk/bolaocopa.git /root/bolaocopa
 ```
 
 ## 2. Enviar os arquivos do projeto
@@ -33,12 +35,22 @@ No seu computador, envie o projeto para a VPS com `scp`, `rsync` ou Git.
 Exemplo com `rsync`:
 
 ```sh
-rsync -av --delete ./ usuario@SEU_IP:/var/www/bolaocopa/current/
+rsync -av --delete ./ usuario@SEU_IP:/var/www/bolaocopa/bolaocopa/
+```
+
+Na VPS em producao, o fluxo usado hoje e:
+
+```sh
+cd /root/bolaocopa
+git fetch origin
+git checkout main
+git reset --hard origin/main
+rsync -a --delete --exclude .git --exclude node_modules --exclude dist --exclude .env.local /root/bolaocopa/ /var/www/bolaocopa/bolaocopa/
 ```
 
 ## 3. Configurar variaveis de ambiente na VPS
 
-Na VPS, crie o arquivo `/var/www/bolaocopa/current/.env.local` com:
+Na VPS, crie o arquivo `/var/www/bolaocopa/bolaocopa/.env.local` com:
 
 ```env
 VITE_SUPABASE_URL=https://seu-projeto.supabase.co
@@ -52,7 +64,7 @@ SUPABASE_SERVICE_KEY=sua_service_role_key
 Na VPS:
 
 ```sh
-cd /var/www/bolaocopa/current
+cd /var/www/bolaocopa/bolaocopa
 npm ci
 npm run build
 ```
@@ -107,8 +119,12 @@ certbot --nginx -d app.bolaocopa.inovaflowtec.com.br
 Sempre que publicar uma nova versao:
 
 ```sh
-cd /var/www/bolaocopa/current
-git pull
+cd /root/bolaocopa
+git fetch origin
+git checkout main
+git reset --hard origin/main
+rsync -a --delete --exclude .git --exclude node_modules --exclude dist --exclude .env.local /root/bolaocopa/ /var/www/bolaocopa/bolaocopa/
+cd /var/www/bolaocopa/bolaocopa
 npm ci
 npm run build
 systemctl restart bolaocopa
@@ -133,5 +149,5 @@ curl http://127.0.0.1:4000/api/health
 Ver se o frontend foi gerado:
 
 ```sh
-ls -la /var/www/bolaocopa/current/dist
+ls -la /var/www/bolaocopa/bolaocopa/dist
 ```

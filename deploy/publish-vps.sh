@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-APP_DIR="/var/www/bolaocopa/current"
+APP_DIR="/var/www/bolaocopa/bolaocopa"
 
 cd "$APP_DIR"
 npm ci

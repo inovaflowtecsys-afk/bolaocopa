@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { AppState, User, Match, Bet } from '../types';
 import { calculatePoints } from '../constants';
 import { toast } from 'sonner';
-import { isSupabaseConfigured, supabase, supabaseConfigError } from '../lib/supabase';
+import { getLastSupabaseFetchDiagnostics, isSupabaseConfigured, supabase, supabaseConfigError } from '../lib/supabase';
 
 // ============================================================
 // Funções de mapeamento snake_case (Supabase) → camelCase (App)
@@ -48,6 +48,107 @@ function mapBet(row: Record<string, any>): Bet {
     pointsEarned: row.points_earned ?? undefined,
     isLocked: row.is_locked ?? false,
   };
+}
+
+const SUPABASE_PAGE_SIZE = 1000;
+const SUPABASE_OPERATION_TIMEOUT_MS = 20000;
+
+const authLog = (step: string, details?: Record<string, unknown>) => {
+  console.info(`[auth-mobile] ${step}`, details ?? {});
+};
+
+const authErrorLog = (step: string, error: unknown, details?: Record<string, unknown>) => {
+  console.error(`[auth-mobile] ${step}`, { error, ...(details ?? {}) });
+};
+
+const getErrorDiagnostics = (error: unknown) => {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      cause: error.cause,
+    };
+  }
+
+  if (typeof error === 'object' && error) {
+    return error;
+  }
+
+  return { message: String(error) };
+};
+
+const isNetworkLikeAuthError = (error: unknown) => {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'object' && error && 'message' in error
+        ? String((error as { message?: unknown }).message)
+        : String(error);
+
+  return /failed to fetch|networkerror|load failed|tempo esgotado|abort|cors|preflight|network request failed|fetch/i.test(message);
+};
+
+const betLog = (step: string, details?: Record<string, unknown>) => {
+  console.info(`[bet-mobile] ${step}`, details ?? {});
+};
+
+const betErrorLog = (step: string, error: unknown, details?: Record<string, unknown>) => {
+  console.error(`[bet-mobile] ${step}`, { error, ...(details ?? {}) });
+};
+
+const clearLargeAccessibleCookies = () => {
+  if (typeof document === 'undefined' || document.cookie.length < 6000) return;
+
+  document.cookie.split(';').forEach(cookie => {
+    const name = cookie.split('=')[0]?.trim();
+    if (!name) return;
+
+    document.cookie = `${name}=; Max-Age=0; path=/`;
+  });
+};
+
+function withOperationTimeout<T>(
+  operation: PromiseLike<T>,
+  context: string,
+  timeoutMs = SUPABASE_OPERATION_TIMEOUT_MS,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  return Promise.race([
+    Promise.resolve(operation),
+    new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        reject(new Error(`Tempo esgotado ao ${context}.`));
+      }, timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
+async function fetchAllBetsRows() {
+  const rows: Record<string, any>[] = [];
+
+  for (let from = 0; ; from += SUPABASE_PAGE_SIZE) {
+    const to = from + SUPABASE_PAGE_SIZE - 1;
+    const { data, error } = await supabase
+      .from('bets')
+      .select('*')
+      .order('created_at', { ascending: true })
+      .range(from, to);
+
+    if (error) {
+      return { data: rows, error };
+    }
+
+    const page = data ?? [];
+    rows.push(...page);
+
+    if (page.length < SUPABASE_PAGE_SIZE) {
+      return { data: rows, error: null };
+    }
+  }
 }
 
 // ============================================================
@@ -130,6 +231,7 @@ export function useAppState() {
     matches: loadCachedMatches(),
   });
   const isHydrating = useRef(false);
+  const pendingHydrateUserId = useRef<string | null | undefined>(undefined);
   const hydrateDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressAuthHydrationForUser = useRef<string | null>(null);
 
@@ -203,7 +305,7 @@ export function useAppState() {
 
   const handleSupabaseError = (error: any, context: string) => {
     console.error(`Erro ao ${context}:`, error);
-    toast.error(getReadableSupabaseError(error, `Erro ao ${context}. Verifique sua conex?o ou firewall.`));
+    toast.error(getReadableSupabaseError(error, `Erro ao ${context}. Verifique sua conexão ou firewall.`));
     return null;
   };
 
@@ -241,7 +343,7 @@ export function useAppState() {
   const withRetry = async <T>(fn: () => PromiseLike<T>, context: string, retries = 3, delayMs = 500): Promise<T | null> => {
     for (let attempt = 0; attempt < 2; attempt++) { // só 2 tentativas
       try {
-        return await fn();
+        return await withOperationTimeout(fn(), context);
       } catch (err) {
         if (attempt === 1) {
           handleSupabaseError(err, context);
@@ -255,9 +357,15 @@ export function useAppState() {
   };
 
   const hydrateState = async (userId: string | null) => {
+    authLog('hydrate:start', { hasUserId: Boolean(userId), alreadyHydrating: isHydrating.current });
+
     // Evita chamadas paralelas simultâneas
-    if (isHydrating.current) return;
+    if (isHydrating.current) {
+      pendingHydrateUserId.current = userId;
+      return;
+    }
     isHydrating.current = true;
+    pendingHydrateUserId.current = undefined;
 
     if (!ensureSupabaseReady('carregar dados', false)) {
       setState(prev => ({
@@ -268,13 +376,17 @@ export function useAppState() {
         currentUser: null,
       }));
       isHydrating.current = false;
+      const queuedUserId = pendingHydrateUserId.current;
+      if (queuedUserId !== undefined) {
+        void hydrateState(queuedUserId);
+      }
       return;
     }
 
     try {
       const [matchesRes, settingsRes] = await Promise.all([
         withRetry(async () => await supabase.from('matches').select('*').order('date', { ascending: true }), 'buscar partidas'),
-        withRetry(async () => await supabase.from('settings').select('*').eq('id', 1).maybeSingle(), 'buscar configura??es'),
+        withRetry(async () => await supabase.from('settings').select('*').eq('id', 1).maybeSingle(), 'buscar configurações'),
       ]);
 
       const resolvedMatches = matchesRes
@@ -304,24 +416,37 @@ export function useAppState() {
       let bets: Bet[] = [];
 
       if (userId) {
-        currentUser = await fetchUserProfile(userId);
+        currentUser = await withOperationTimeout(fetchUserProfile(userId), 'buscar perfil do usuario');
 
         if (!currentUser) {
           await supabase.auth.signOut();
           toast.error('Seu perfil não foi encontrado no banco. Execute o schema do Supabase antes de fazer login.');
         } else {
-          const [usersRes, betsRes] = await Promise.all([
-            supabase.from('users').select('*').order('total_points', { ascending: false }),
-            currentUser.isAdmin
-              ? supabase.from('bets').select('*')
-              : supabase.from('bets').select('*').eq('user_id', userId),
-          ]);
+          const [usersRes, ownBetsRes, allBetsRes] = await withOperationTimeout(
+            Promise.all([
+              supabase.from('users').select('*').order('total_points', { ascending: false }),
+              supabase.from('bets').select('*').eq('user_id', userId),
+              currentUser.isAdmin ? fetchAllBetsRows() : Promise.resolve(null),
+            ]),
+            'carregar dados do usuario',
+          );
 
           if (usersRes.error) throw usersRes.error;
-          if (betsRes.error) throw betsRes.error;
+          if (ownBetsRes.error) throw ownBetsRes.error;
+          if (allBetsRes?.error) {
+            console.error('Erro ao buscar todos os palpites do admin:', allBetsRes.error);
+            toast.error('Nao foi possivel carregar todos os palpites. Seus palpites foram carregados.');
+          }
 
           users = (usersRes.data ?? []).map(mapUser);
-          bets = (betsRes.data ?? []).map(mapBet);
+          const mergedBetsById = new Map<string, Record<string, any>>();
+          for (const row of allBetsRes?.data ?? []) {
+            mergedBetsById.set(row.id, row);
+          }
+          for (const row of ownBetsRes.data ?? []) {
+            mergedBetsById.set(row.id, row);
+          }
+          bets = Array.from(mergedBetsById.values()).map(mapBet);
         }
       }
 
@@ -333,11 +458,22 @@ export function useAppState() {
         currentUser,
         settings: resolvedSettings,
       }));
+      authLog('hydrate:success', {
+        hasCurrentUser: Boolean(currentUser),
+        usersCount: users.length,
+        matchesCount: resolvedMatches.length,
+        betsCount: bets.length,
+      });
     } catch (error) {
-      console.error('Erro ao buscar dados:', error);
+      authErrorLog('hydrate:error', error);
       toast.error('Erro ao carregar dados do Supabase.');
     } finally {
+      authLog('hydrate:finish');
       isHydrating.current = false;
+      const queuedUserId = pendingHydrateUserId.current;
+      if (queuedUserId !== undefined) {
+        void hydrateState(queuedUserId);
+      }
     }
   };
 
@@ -379,10 +515,19 @@ export function useAppState() {
         return;
       }
 
-      const { data, error } = await supabase.auth.getSession();
+      authLog('bootstrap:get-session:start');
+      const { data, error } = await withOperationTimeout(
+        supabase.auth.getSession(),
+        'recuperar sessao',
+      );
       if (error) {
         console.error('Erro ao recuperar sessão:', error);
       }
+
+      authLog('bootstrap:get-session:finish', {
+        hasSession: Boolean(data.session),
+        userId: data.session?.user?.id,
+      });
 
       if (isMounted) {
         await hydrateState(data.session?.user?.id ?? null);
@@ -391,8 +536,13 @@ export function useAppState() {
 
     void bootstrap();
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (!isMounted) return;
+      authLog('auth-state-change', {
+        event,
+        hasSession: Boolean(session),
+        userId: session?.user?.id,
+      });
 
       if (
         suppressAuthHydrationForUser.current &&
@@ -429,21 +579,93 @@ export function useAppState() {
   const login = async (email: string, password: string) => {
     if (!ensureSupabaseReady('fazer login')) return false;
 
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      toast.error('E-mail ou senha incorretos.');
-      return false;
+    authLog('login:start', { email: email.trim() });
+    let loginData: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>['data'];
+
+    try {
+      const { data, error } = await withOperationTimeout(
+        supabase.auth.signInWithPassword({ email: email.trim(), password }),
+        'fazer login',
+      );
+
+      authLog('login:supabase-response', {
+        hasUser: Boolean(data.user),
+        hasSession: Boolean(data.session),
+        userId: data.user?.id,
+        error: error ? { message: error.message, status: error.status, code: error.code } : null,
+        fetch: getLastSupabaseFetchDiagnostics(),
+      });
+
+      if (error) {
+        authErrorLog('login:supabase-error', error, {
+          email: email.trim(),
+          fetch: getLastSupabaseFetchDiagnostics(),
+        });
+        toast.error('E-mail ou senha incorretos.');
+        return false;
+      }
+
+      loginData = data;
+    } catch (error) {
+      const diagnostics = {
+        error: getErrorDiagnostics(error),
+        fetch: getLastSupabaseFetchDiagnostics(),
+        standalone:
+          typeof window !== 'undefined' &&
+          (window.matchMedia?.('(display-mode: standalone)').matches ||
+            ('standalone' in window.navigator && Boolean((window.navigator as Navigator & { standalone?: boolean }).standalone))),
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+        online: typeof navigator !== 'undefined' ? navigator.onLine : undefined,
+      };
+      authErrorLog('login:unexpected-error', error, diagnostics);
+
+      const userMessage = isNetworkLikeAuthError(error)
+        ? 'Falha de rede/CORS ao comunicar com o Supabase. Abra o console do iOS Safari e procure por [auth-mobile] login:unexpected-error.'
+        : error instanceof Error
+          ? error.message
+          : 'Não foi possível entrar agora. Verifique sua conexão e tente novamente.';
+
+      toast.error(userMessage);
+      throw new Error(userMessage, { cause: error });
     }
 
     // Busca perfil do usuário na tabela users
-    const { data: userDb, error: userDbError } = await supabase.from('users').select('*').eq('id', data.user.id).maybeSingle();
+    const { data: userDb, error: userDbError } = await withOperationTimeout(
+      supabase.from('users').select('*').eq('id', loginData.user.id).maybeSingle(),
+      'buscar perfil do usuario',
+    );
+    authLog('login:profile-response', {
+      hasProfile: Boolean(userDb),
+      userId: loginData.user.id,
+      error: userDbError ? { message: userDbError.message, code: userDbError.code } : null,
+      fetch: getLastSupabaseFetchDiagnostics(),
+    });
     if (userDbError || !userDb) {
+      authErrorLog('login:profile-error', userDbError ?? new Error('Perfil nao encontrado'), {
+        userId: loginData.user.id,
+        fetch: getLastSupabaseFetchDiagnostics(),
+      });
       toast.error('Usuário não encontrado no sistema. Contate o administrador.');
       await supabase.auth.signOut();
       return false;
     }
 
-    await hydrateState(data.user.id);
+    authLog('login:session-created', {
+      userId: loginData.user.id,
+      expiresAt: loginData.session?.expires_at,
+    });
+    const loggedUser = mapUser(userDb);
+    setState(prev => ({
+      ...prev,
+      currentUser: loggedUser,
+      users: prev.users.some(user => user.id === loggedUser.id)
+        ? prev.users.map(user => user.id === loggedUser.id ? loggedUser : user)
+        : [loggedUser, ...prev.users],
+    }));
+    void withOperationTimeout(hydrateState(loginData.user.id), 'carregar dados do login')
+      .then(() => authLog('login:hydrate-background:success', { userId: loginData.user.id }))
+      .catch(error => authErrorLog('login:hydrate-background:error', error, { userId: loginData.user.id }));
+    authLog('login:dashboard-ready', { userId: loginData.user.id });
     return true;
   };
 
@@ -460,6 +682,87 @@ export function useAppState() {
   const resetState = async () => {
     await hydrateState(state.currentUser?.id ?? null);
     toast.success('Dados recarregados com sucesso!');
+  };
+
+  const updateCurrentUserPhoto = async (photoUrl: string) => {
+    if (!state.currentUser) {
+      toast.error('Faça login para alterar sua foto.');
+      return false;
+    }
+
+    if (!ensureSupabaseReady('alterar foto do usuário')) return false;
+
+    const { error } = await supabase
+      .from('users')
+      .update({ photo_url: photoUrl })
+      .eq('id', state.currentUser.id);
+
+    if (error) {
+      toast.error(`Erro ao alterar foto: ${error.message}`);
+      return false;
+    }
+
+    const { error: authError } = await supabase.auth.updateUser({
+      data: { photo_url: photoUrl },
+    });
+
+    if (authError) {
+      console.warn('Não foi possível atualizar a foto no metadata do Auth:', authError);
+    }
+
+    setState(prev => ({
+      ...prev,
+      currentUser: prev.currentUser ? { ...prev.currentUser, photoUrl } : prev.currentUser,
+      users: prev.users.map(user =>
+        user.id === state.currentUser?.id ? { ...user, photoUrl } : user
+      ),
+    }));
+
+    toast.success('Foto atualizada com sucesso!');
+    return true;
+  };
+
+  const updateCurrentUserChampionPrediction = async (championPrediction: string) => {
+    if (!state.currentUser) {
+      toast.error('Faça login para alterar seu país campeão.');
+      return false;
+    }
+
+    if (state.settings.betsLocked) {
+      toast.error('A alteração do país campeão está bloqueada.');
+      return false;
+    }
+
+    if (!ensureSupabaseReady('alterar país campeão')) return false;
+
+    const { error } = await supabase
+      .from('users')
+      .update({ champion_prediction: championPrediction })
+      .eq('id', state.currentUser.id);
+
+    if (error) {
+      toast.error(`Erro ao alterar país: ${error.message}`);
+      return false;
+    }
+
+    const { error: authError } = await supabase.auth.updateUser({
+      data: { champion_prediction: championPrediction },
+    });
+
+    if (authError) {
+      console.warn('Não foi possível atualizar o país campeão no metadata do Auth:', authError);
+    }
+
+    setState(prev => ({
+      ...prev,
+      currentUser: prev.currentUser ? { ...prev.currentUser, championPrediction } : prev.currentUser,
+      users: prev.users.map(user =>
+        user.id === state.currentUser?.id ? { ...user, championPrediction } : user
+      ),
+    }));
+
+    toast.success('País campeão atualizado com sucesso!');
+    return true;
   };
 
   const registerUser = async (userData: Omit<User, 'id' | 'totalPoints' | 'isAdmin' | 'isPaid'>) => {
@@ -505,7 +808,7 @@ export function useAppState() {
       }
       return {
         success: false,
-        error: getReadableSupabaseError(authError, `Erro ao cadastrar usu?rio: ${authError.message}`),
+        error: getReadableSupabaseError(authError, `Erro ao cadastrar usuário: ${authError.message}`),
       };
     }
 
@@ -530,7 +833,7 @@ export function useAppState() {
   };
 
   const registerUserAndRedirect = async (userData: Omit<User, 'id' | 'totalPoints' | 'isAdmin' | 'isPaid'>) => {
-    if (!ensureSupabaseReady('cadastrar usuÃ¡rio')) return { success: false, error: 'Supabase nÃ£o configurado' };
+    if (!ensureSupabaseReady('cadastrar usuário')) return { success: false, error: 'Supabase não configurado' };
 
     if (state.settings.betsLocked) {
       return { success: false, error: 'O Bolão está fechado para novos participantes.' };
@@ -552,7 +855,7 @@ export function useAppState() {
           },
         },
       }),
-      'cadastrar usuÃ¡rio'
+      'cadastrar usuário'
     );
 
     if (!result) {
@@ -567,7 +870,7 @@ export function useAppState() {
     if (authError) {
       console.error('Erro detalhado Supabase Auth:', authError);
       if (authError.message.includes('already registered') || authError.message.includes('already been registered')) {
-        return { success: false, error: 'Este e-mail jÃ¡ estÃ¡ cadastrado.' };
+        return { success: false, error: 'Este e-mail já está cadastrado.' };
       }
 
       return {
@@ -578,7 +881,7 @@ export function useAppState() {
 
     const userId = authData.user?.id;
     if (!userId) {
-      return { success: false, error: 'Erro ao obter ID do usuÃ¡rio.' };
+      return { success: false, error: 'Erro ao obter ID do usuário.' };
     }
 
     if (authData.session) {
@@ -613,36 +916,169 @@ export function useAppState() {
   };
 
   const placeBet = async (matchId: string, homeScore: number, awayScore: number) => {
-    if (!state.currentUser || state.settings.betsLocked) return;
-    if (!ensureSupabaseReady('salvar palpite')) return;
+    if (!state.currentUser) {
+      toast.error('Faça login para salvar seu palpite.');
+      return false;
+    }
 
-    const { data, error } = await supabase
-      .from('bets')
-      .upsert({
-        user_id: state.currentUser.id,
-        match_id: matchId,
-        home_score: homeScore,
-        away_score: awayScore,
-        is_locked: false,
-      }, { onConflict: 'user_id,match_id' })
-      .select()
-      .single();
+    if (state.settings.betsLocked) {
+      toast.error('Os palpites estão bloqueados.');
+      return false;
+    }
 
-    if (error) { toast.error('Erro ao fazer aposta.'); return; }
+    if (!ensureSupabaseReady('salvar palpite')) return false;
 
-    const mappedBet = mapBet(data);
-    setState(prev => {
-      const existingIndex = prev.bets.findIndex(
-        b => b.userId === state.currentUser?.id && b.matchId === matchId
+    const userId = state.currentUser.id;
+    betLog('save:start', { userId, matchId, homeScore, awayScore });
+
+    try {
+      const { data: sessionData, error: sessionError } = await withOperationTimeout(
+        supabase.auth.getSession(),
+        'validar sessao antes de salvar palpite',
       );
-      const newBets = [...prev.bets];
-      if (existingIndex >= 0) {
-        newBets[existingIndex] = { ...newBets[existingIndex], homeScore, awayScore };
-      } else {
-        newBets.push(mappedBet);
+
+      betLog('save:session', {
+        hasSession: Boolean(sessionData.session),
+        sessionUserId: sessionData.session?.user.id,
+        error: sessionError ? { message: sessionError.message } : null,
+      });
+
+      if (sessionError || !sessionData.session?.access_token || sessionData.session.user.id !== userId) {
+        toast.error('Sua sessao expirou. Faca login novamente para salvar o palpite.');
+        await supabase.auth.signOut();
+        setState(prev => ({ ...prev, currentUser: null }));
+        return false;
       }
-      return { ...prev, bets: newBets };
-    });
+
+      const { data, error } = await withOperationTimeout(
+        supabase
+          .from('bets')
+          .upsert({
+            user_id: userId,
+            match_id: matchId,
+            home_score: homeScore,
+            away_score: awayScore,
+            is_locked: false,
+          }, { onConflict: 'user_id,match_id' })
+          .select()
+          .single(),
+        'salvar palpite',
+      );
+
+      betLog('save:upsert-response', {
+        hasData: Boolean(data),
+        betId: data?.id,
+        error: error ? { message: error.message, code: error.code } : null,
+      });
+
+      if (error || !data) {
+        toast.error(`Erro ao salvar palpite: ${error?.message ?? 'registro nao confirmado.'}`);
+        return false;
+      }
+
+      const { data: confirmedBet, error: confirmError } = await withOperationTimeout(
+        supabase
+          .from('bets')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('match_id', matchId)
+          .maybeSingle(),
+        'confirmar palpite salvo',
+      );
+
+      betLog('save:confirm-response', {
+        confirmed: Boolean(confirmedBet),
+        betId: confirmedBet?.id,
+        error: confirmError ? { message: confirmError.message, code: confirmError.code } : null,
+      });
+
+      if (confirmError || !confirmedBet) {
+        toast.error('Nao foi possivel confirmar o palpite salvo. Tente novamente.');
+        return false;
+      }
+
+      const mappedBet = mapBet(confirmedBet);
+      setState(prev => {
+        const existingIndex = prev.bets.findIndex(
+          b => b.userId === userId && b.matchId === matchId
+        );
+        const newBets = [...prev.bets];
+        if (existingIndex >= 0) {
+          newBets[existingIndex] = mappedBet;
+        } else {
+          newBets.push(mappedBet);
+        }
+        return { ...prev, bets: newBets };
+      });
+
+      betLog('save:success', { userId, matchId, betId: mappedBet.id });
+      return true;
+    } catch (error) {
+      betErrorLog('save:error', error, { userId, matchId });
+      const message = getReadableSupabaseError(
+        error,
+        'Nao foi possivel salvar seu palpite agora. Verifique sua conexao e tente novamente.',
+      );
+      toast.error(message);
+      return false;
+    }
+  };
+
+  const loadMatchBets = async (matchId: string) => {
+    if (!state.currentUser) {
+      toast.error('Faça login para ver os palpites.');
+      return false;
+    }
+
+    try {
+      const { data: sessionData, error: sessionError } = await withOperationTimeout(
+        supabase.auth.getSession(),
+        'validar sessao para carregar palpites',
+      );
+
+      if (sessionError || !sessionData.session?.access_token) {
+        throw new Error('Sessao obrigatoria para carregar palpites.');
+      }
+
+      const response = await withOperationTimeout(
+        fetch(new URL('/api/match-bets', window.location.origin).toString(), {
+          method: 'POST',
+          cache: 'no-store',
+          credentials: 'omit',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            matchId,
+            accessToken: sessionData.session.access_token,
+          }),
+        }),
+        'carregar palpites do jogo',
+        30000,
+      );
+
+      const payload = await response.json().catch(() => null) as { bets?: Record<string, any>[]; error?: string } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error || `API retornou HTTP ${response.status} ao carregar palpites.`);
+      }
+
+      const loadedBets = (payload?.bets ?? []).map(mapBet);
+      setState(prev => {
+        const byKey = new Map(prev.bets.map(bet => [`${bet.userId}:${bet.matchId}`, bet]));
+        for (const bet of loadedBets) {
+          byKey.set(`${bet.userId}:${bet.matchId}`, bet);
+        }
+        return { ...prev, bets: Array.from(byKey.values()) };
+      });
+
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro ao carregar palpites.';
+      console.error('[match-bets] load:error', error);
+      toast.error(message);
+      return false;
+    }
   };
 
   const updateMatchResult = async (matchId: string, homeScore: number, awayScore: number) => {
@@ -748,7 +1184,7 @@ export function useAppState() {
   };
 
   const addMatch = async (matchData: Omit<Match, 'id' | 'status'>) => {
-    if (!ensureSupabaseReady('adicionar partida')) return;
+    if (!ensureSupabaseReady('adicionar partida')) return false;
 
     const { data, error } = await supabase
       .from('matches')
@@ -765,16 +1201,22 @@ export function useAppState() {
       .select()
       .single();
 
-    if (error) { toast.error(`Erro ao adicionar partida: ${error.message}`); return; }
+    if (error) {
+      toast.error(`Erro ao adicionar partida: ${error.message}`);
+      return false;
+    }
+
     setState(prev => {
       const matches = [...prev.matches, mapMatch(data)];
       cacheMatches(matches);
       return { ...prev, matches };
     });
+
+    return true;
   };
 
   const updateMatch = async (matchId: string, matchData: Partial<Match>) => {
-    if (!ensureSupabaseReady('editar partida')) return;
+    if (!ensureSupabaseReady('editar partida')) return false;
 
     const payload: Record<string, any> = {};
     if (matchData.homeTeam !== undefined) payload.home_team = matchData.homeTeam;
@@ -789,7 +1231,11 @@ export function useAppState() {
     if (matchData.awayFlagUrl !== undefined) payload.away_flag_url = matchData.awayFlagUrl;
 
     const { error } = await supabase.from('matches').update(payload).eq('id', matchId);
-    if (error) { toast.error('Erro ao atualizar partida.'); return; }
+    if (error) {
+      toast.error(`Erro ao atualizar partida: ${error.message}`);
+      return false;
+    }
+
     setState(prev => {
       const matches = prev.matches.map(m => m.id === matchId ? { ...m, ...matchData } : m);
       cacheMatches(matches);
@@ -798,13 +1244,14 @@ export function useAppState() {
         matches,
       };
     });
+
+    return true;
   };
 
   const deleteMatch = async (matchId: string) => {
     if (!ensureSupabaseReady('deletar partida')) return;
 
     const { error } = await supabase.from('matches').delete().eq('id', matchId);
-    if (error) { toast.error('Erro ao deletar partida.'); return; }
     setState(prev => {
       const matches = prev.matches.filter(m => m.id !== matchId);
       cacheMatches(matches);
@@ -819,8 +1266,49 @@ export function useAppState() {
   const deleteUser = async (userId: string) => {
     if (!ensureSupabaseReady('remover usuário')) return;
 
-    const { error } = await supabase.from('users').delete().eq('id', userId);
-    if (error) { toast.error('Erro ao deletar usuário.'); return; }
+    try {
+      const { data: sessionData, error: sessionError } = await withOperationTimeout(
+        supabase.auth.getSession(),
+        'validar sessao administrativa',
+      );
+      if (sessionError || !sessionData.session?.access_token) {
+        throw new Error('Sessao administrativa obrigatoria.');
+      }
+
+      clearLargeAccessibleCookies();
+
+      const response = await withOperationTimeout(
+        fetch(new URL('/api/delete-user', window.location.origin).toString(), {
+          method: 'POST',
+          cache: 'no-store',
+          credentials: 'omit',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ userId, accessToken: sessionData.session.access_token }),
+        }),
+        'excluir usuario',
+        60000,
+      );
+
+      let payload: { error?: string } | null = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.error || `API administrativa retornou HTTP ${response.status} ao excluir usuario.`);
+      }
+    } catch (error) {
+      const rawMessage = error instanceof Error ? error.message : 'Erro ao deletar usuario.';
+      const message = /failed to fetch|networkerror|tempo esgotado|fetch|http 50[0-9]|http 52[0-9]/i.test(rawMessage)
+        ? 'Nao foi possivel concluir o banimento agora. A API esta online, mas a operacao expirou ou a rede oscilou. Tente novamente em instantes.'
+        : rawMessage;
+      toast.error(message);
+      return false;
+    }
 
     if (state.currentUser?.id === userId) {
       await supabase.auth.signOut();
@@ -833,7 +1321,7 @@ export function useAppState() {
       bets: prev.bets.filter(b => b.userId !== userId),
     }));
 
-    toast.success('Perfil removido. Para excluir também o usuário do Auth, use o painel do Supabase ou uma função administrativa.');
+    return true;
   };
 
   return {
@@ -842,6 +1330,7 @@ export function useAppState() {
     logout,
     registerUser: registerUserAndRedirect,
     placeBet,
+    loadMatchBets,
     updateMatchResult,
     togglePaymentStatus,
     toggleAdminStatus,
@@ -850,6 +1339,8 @@ export function useAppState() {
     updateMatch,
     deleteMatch,
     deleteUser,
+    updateCurrentUserPhoto,
+    updateCurrentUserChampionPrediction,
     setEntryFee,
     setYear,
     setLogoUrl,

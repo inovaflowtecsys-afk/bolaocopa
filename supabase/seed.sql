@@ -4,7 +4,7 @@
 insert into public.matches (
   home_team,
   away_team,
-  "group",
+  group_name,
   date,
   status,
   location,

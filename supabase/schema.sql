@@ -28,7 +28,7 @@ create table if not exists public.matches (
   id uuid primary key default gen_random_uuid(),
   home_team text not null,
   away_team text not null,
-  "group" text not null,
+  group_name text not null,
   date timestamptz not null,
   status text not null default 'scheduled' check (status in ('scheduled', 'live', 'finished')),
   home_score integer,

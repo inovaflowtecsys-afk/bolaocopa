@@ -1,4 +1,4 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { useAppState } from './hooks/useAppState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -11,11 +11,11 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import ResetPasswordButton from '@/components/admin/ResetPasswordButton';
 import ChangePasswordModal from '@/components/auth/ChangePasswordModal';
 import ForceChangePasswordModal from '@/components/auth/ForceChangePasswordModal';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
-import { Trophy, Users, DollarSign, Calendar, Shield, LogOut, UserPlus, Filter, Lock, Unlock, Pencil, Trash2, PieChart as PieChartIcon, Eye, EyeOff, MessageCircle, Download } from 'lucide-react';
+import { Trophy, Users, DollarSign, Calendar, Shield, LogOut, UserPlus, Filter, Lock, Unlock, Pencil, Trash2, PieChart as PieChartIcon, Eye, EyeOff, MessageCircle, Download, Eraser, AlertTriangle, Camera, Flag, Share2, PlusSquare } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
 import { GROUPS, COUNTRIES, SCORING_RULES, calculatePoints } from './constants';
@@ -29,13 +29,82 @@ type BeforeInstallPromptEvent = Event & {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 };
 
+type UserBetSummary = {
+  placedCount: number;
+  pendingCount: number;
+};
+
+type ConfirmationDialogState = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void | Promise<void>;
+  destructive?: boolean;
+} | null;
+
+type BetAuditAction = 'create_or_update_bet' | 'clear_bet_fields';
+
+const sanitizeScoreInput = (value: string) => {
+  const digitsOnly = value.replace(/\D/g, '');
+
+  if (!digitsOnly) return '';
+
+  return digitsOnly.replace(/^0+(?=\d)/, '').slice(0, 2);
+};
+
+const resizeImageFile = (file: File) => new Promise<string>((resolve, reject) => {
+  const img = new window.Image();
+  const reader = new FileReader();
+
+  reader.onerror = () => reject(new Error('NÃ£o foi possÃ­vel ler a imagem.'));
+  img.onerror = () => reject(new Error('NÃ£o foi possÃ­vel carregar a imagem.'));
+
+  reader.onload = (ev) => {
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const maxSize = 300;
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > maxSize) {
+          height = Math.round(height * maxSize / width);
+          width = maxSize;
+        }
+      } else if (height > maxSize) {
+        width = Math.round(width * maxSize / height);
+        height = maxSize;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', 0.7));
+    };
+
+    img.src = ev.target?.result as string;
+  };
+
+  reader.readAsDataURL(file);
+});
+
+const getPasswordRecoveryRedirectUrl = () => {
+  return new URL(import.meta.env.BASE_URL || '/', window.location.origin).toString();
+};
+
 export default function App() {
-      const [forceChangeOpen, setForceChangeOpen] = React.useState(false);
-    const [isChangePasswordOpen, setIsChangePasswordOpen] = React.useState(false);
-  const appInfoLabel = 'InovaFlowTec v1.1.15 17/05/2026';
+  const [forceChangeOpen, setForceChangeOpen] = React.useState(false);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = React.useState(false);
+  const [isChampionDialogOpen, setIsChampionDialogOpen] = React.useState(false);
+  const [championFormValue, setChampionFormValue] = React.useState('');
+  const [isUpdatingChampion, setIsUpdatingChampion] = React.useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = React.useState(false);
+  const userMenuRef = React.useRef<HTMLDivElement | null>(null);
+  const appInfoLabel = 'InovaFlowTec v1.2.20 11/06/2026';
   const whatsappGroupUrl = 'https://chat.whatsapp.com/Bwugcg5uij29gB644uZVJO?mode=gi_t';
 
-  const { state, login, logout, registerUser, placeBet, updateMatchResult, togglePaymentStatus, toggleAdminStatus, toggleBetsLock, addMatch, updateMatch, deleteMatch, deleteUser, setEntryFee, setYear, setLogoUrl, setPrizeSettings, resetState } = useAppState();
+  const { state, login, logout, registerUser, placeBet, loadMatchBets, updateMatchResult, togglePaymentStatus, toggleAdminStatus, toggleBetsLock, addMatch, updateMatch, deleteMatch, deleteUser, updateCurrentUserPhoto, updateCurrentUserChampionPrediction, setEntryFee, setYear, setLogoUrl, setPrizeSettings, resetState } = useAppState();
   const supabaseReady = isSupabaseConfigured;
   const [activeTab, setActiveTab] = React.useState('matches');
   const [groupFilter, setGroupFilter] = React.useState('all');
@@ -44,7 +113,7 @@ export default function App() {
   const [registerErrors, setRegisterErrors] = React.useState<string[]>([]);
   const [registerApiError, setRegisterApiError] = React.useState<string | null>(null);
   const [selectedMatch, setSelectedMatch] = React.useState<Match | null>(null);
-  const [betScores, setBetScores] = React.useState({ home: 0, away: 0 });
+  const [betScores, setBetScores] = React.useState({ home: '0', away: '0' });
   const [loginForm, setLoginForm] = React.useState({ email: '', password: '' });
   const [showPassword, setShowPassword] = React.useState(false);
   const [isForgotPassword, setIsForgotPassword] = React.useState(false);
@@ -56,15 +125,24 @@ export default function App() {
   const [registerForm, setRegisterForm] = React.useState({ name: '', email: '', password: '', champion: '' });
   const [adminMatchFilter, setAdminMatchFilter] = React.useState('all');
   const [viewingBetsMatch, setViewingBetsMatch] = React.useState<Match | null>(null);
+  const [loadingMatchBetsId, setLoadingMatchBetsId] = React.useState<string | null>(null);
   const [viewingUserBets, setViewingUserBets] = React.useState<User | null>(null);
   const [editingMatchId, setEditingMatchId] = React.useState<string | null>(null);
   const [isMatchDialogOpen, setIsMatchDialogOpen] = React.useState(false);
   const [isPendingBetsOpen, setIsPendingBetsOpen] = React.useState(false);
   const [loginError, setLoginError] = React.useState<string | null>(null);
   const [isWinnerModalOpen, setIsWinnerModalOpen] = React.useState(false);
+  const [isPrizeRulesOpen, setIsPrizeRulesOpen] = React.useState(false);
   const [isScoringRulesOpen, setIsScoringRulesOpen] = React.useState(false);
+  const [isIosInstallHelpOpen, setIsIosInstallHelpOpen] = React.useState(false);
+  const [canShowIosInstallHelp, setCanShowIosInstallHelp] = React.useState(false);
+  const [confirmationDialog, setConfirmationDialog] = React.useState<ConfirmationDialogState>(null);
+  const [isPlacingBet, setIsPlacingBet] = React.useState(false);
+  const [isConfirmingAction, setIsConfirmingAction] = React.useState(false);
+  const [isUpdatingPhoto, setIsUpdatingPhoto] = React.useState(false);
   const [installPromptEvent, setInstallPromptEvent] = React.useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = React.useState(false);
+  const profilePhotoInputRef = React.useRef<HTMLInputElement | null>(null);
   const [prizeForm, setPrizeForm] = React.useState(state.settings.prizes);
   const [newMatch, setNewMatch] = React.useState({ 
     homeTeam: '', 
@@ -78,6 +156,47 @@ export default function App() {
 
   const currentUser = state.currentUser;
   const canInstallApp = !!installPromptEvent && !isStandalone;
+  const canOfferInstallApp = !isStandalone && (canInstallApp || canShowIosInstallHelp);
+
+  const recordBetAudit = React.useCallback((action: BetAuditAction, details: Record<string, unknown> = {}) => {
+    if (!currentUser) return;
+
+    const auditEntry = {
+      user: {
+        id: currentUser.id,
+        name: currentUser.name,
+        email: currentUser.email,
+      },
+      dateTime: new Date().toISOString(),
+      action,
+      details,
+    };
+
+    try {
+      const rawAudit = localStorage.getItem('bolao-bet-audit-log');
+      const currentAudit = rawAudit ? JSON.parse(rawAudit) : [];
+      const auditLog = Array.isArray(currentAudit) ? currentAudit : [];
+      localStorage.setItem('bolao-bet-audit-log', JSON.stringify([auditEntry, ...auditLog].slice(0, 200)));
+    } catch {
+      localStorage.setItem('bolao-bet-audit-log', JSON.stringify([auditEntry]));
+    }
+  }, [currentUser]);
+
+  const openConfirmationDialog = React.useCallback((dialog: NonNullable<ConfirmationDialogState>) => {
+    setConfirmationDialog(dialog);
+  }, []);
+
+  const handleConfirmDialogAction = async () => {
+    if (!confirmationDialog || isConfirmingAction) return;
+
+    setIsConfirmingAction(true);
+    try {
+      await confirmationDialog.onConfirm();
+      setConfirmationDialog(null);
+    } finally {
+      setIsConfirmingAction(false);
+    }
+  };
 
   React.useEffect(() => {
     if (currentUser && !currentUser.isAdmin && (activeTab === 'users' || activeTab === 'admin')) {
@@ -86,8 +205,36 @@ export default function App() {
   }, [currentUser, activeTab]);
 
   React.useEffect(() => {
+    if (!isUserMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setIsUserMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsUserMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isUserMenuOpen]);
+
+  React.useEffect(() => {
     if (!currentUser) return;
 
+    console.info('[auth-mobile] ui:dashboard-mounted', {
+      userId: currentUser.id,
+      email: currentUser.email,
+    });
     setIsRegistering(false);
     setIsForgotPassword(false);
     setActiveTab('matches');
@@ -95,7 +242,7 @@ export default function App() {
       setForceChangeOpen(false);
       return;
     }
-    // Checagem de senha provisória
+    // Checagem de senha provisÃ³ria
     if (currentUser?.senhaProvisoria) {
       setForceChangeOpen(true);
     } else {
@@ -130,6 +277,15 @@ export default function App() {
       const isNavigatorStandalone = 'standalone' in window.navigator && Boolean((window.navigator as Navigator & { standalone?: boolean }).standalone);
       setIsStandalone(standaloneMediaQuery.matches || isNavigatorStandalone);
     };
+    const userAgent = window.navigator.userAgent;
+    const isIosDevice =
+      /iPad|iPhone|iPod/.test(userAgent) ||
+      (window.navigator.platform === 'MacIntel' && window.navigator.maxTouchPoints > 1);
+    const isSafari =
+      /Safari/i.test(userAgent) &&
+      !/CriOS|FxiOS|EdgiOS|Chrome|Android/i.test(userAgent);
+
+    setCanShowIosInstallHelp(isIosDevice && isSafari);
 
     const handleBeforeInstallPrompt = (event: Event) => {
       event.preventDefault();
@@ -155,13 +311,17 @@ export default function App() {
   }, []);
 
   const handleInstallApp = async () => {
-    if (!installPromptEvent) return;
+    if (!installPromptEvent) {
+      setIsIosInstallHelpOpen(true);
+      return;
+    }
 
-    await installPromptEvent.prompt();
+    const promptInstall = installPromptEvent.prompt.bind(installPromptEvent);
+    await promptInstall();
     const { outcome } = await installPromptEvent.userChoice;
 
     if (outcome === 'accepted') {
-      toast.success('Instalação iniciada.');
+      toast.success('InstalaÃ§Ã£o iniciada.');
     }
 
     setInstallPromptEvent(null);
@@ -229,7 +389,7 @@ export default function App() {
     };
   });
 
-  const userBetSummaryById = new Map(
+  const userBetSummaryById = new Map<string, UserBetSummary>(
     usersWithPendingBets.map(user => [
       user.id,
       {
@@ -241,38 +401,54 @@ export default function App() {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const img = new window.Image();
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        img.onload = () => {
-          // Redimensiona para 300x300 mantendo proporção
-          const canvas = document.createElement('canvas');
-          const maxSize = 300;
-          let width = img.width;
-          let height = img.height;
-          if (width > height) {
-            if (width > maxSize) {
-              height = Math.round((height *= maxSize / width));
-              width = maxSize;
-            }
-          } else {
-            if (height > maxSize) {
-              width = Math.round((width *= maxSize / height));
-              height = maxSize;
-            }
-          }
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, width, height);
-          // JPEG qualidade 0.7
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-          setBase64Photo(dataUrl);
-        };
-        img.src = ev.target?.result as string;
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    resizeImageFile(file)
+      .then(setBase64Photo)
+      .catch((error) => toast.error(error.message || 'NÃ£o foi possÃ­vel processar a imagem.'));
+  };
+
+  const handleProfilePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || isUpdatingPhoto) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Selecione um arquivo de imagem.');
+      return;
+    }
+
+    setIsUpdatingPhoto(true);
+    try {
+      const photoUrl = await resizeImageFile(file);
+      await updateCurrentUserPhoto(photoUrl);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'NÃ£o foi possÃ­vel alterar a foto.';
+      toast.error(message);
+    } finally {
+      setIsUpdatingPhoto(false);
+    }
+  };
+
+  const openChampionDialog = () => {
+    setChampionFormValue(currentUser?.championPrediction ?? '');
+    setIsChampionDialogOpen(true);
+  };
+
+  const handleChampionSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+
+    if (!championFormValue) {
+      toast.error('Selecione um paÃ­s.');
+      return;
+    }
+
+    setIsUpdatingChampion(true);
+    const success = await updateCurrentUserChampionPrediction(championFormValue);
+    setIsUpdatingChampion(false);
+
+    if (success) {
+      setIsChampionDialogOpen(false);
     }
   };
 
@@ -280,14 +456,39 @@ export default function App() {
     e.preventDefault();
     setLoginError(null);
     setIsSubmitting(true);
-    const success = await login(loginForm.email, loginForm.password);
-    if (success) {
-      toast.success('Login realizado com sucesso!');
-    } else {
+    console.info('[auth-mobile] ui:login-submit:start', { email: loginForm.email.trim() });
+    try {
+      const success = await login(loginForm.email, loginForm.password);
+      console.info('[auth-mobile] ui:login-submit:result', { success });
+      if (success) {
+        console.info('[auth-mobile] ui:redirect-dashboard');
+        toast.success('Login realizado com sucesso!');
+        return;
+      }
+
       setLoginError('E-mail ou senha incorretos. Por favor, tente novamente.');
       toast.error('E-mail ou senha incorretos.');
+    } catch (error) {
+      console.error('Erro inesperado no login:', error);
+      console.error('[auth-mobile] ui:login-submit:error', {
+        error,
+        name: error instanceof Error ? error.name : typeof error,
+        message: error instanceof Error ? error.message : String(error),
+        cause: error instanceof Error ? error.cause : undefined,
+        standalone:
+          window.matchMedia?.('(display-mode: standalone)').matches ||
+          ('standalone' in window.navigator && Boolean((window.navigator as Navigator & { standalone?: boolean }).standalone)),
+        online: navigator.onLine,
+        userAgent: navigator.userAgent,
+      });
+      const message = error instanceof Error && error.message
+        ? error.message
+        : 'Não foi possível entrar agora. Verifique sua conexão e tente novamente.';
+      setLoginError(message);
+      toast.error(message);    } finally {
+      console.info('[auth-mobile] ui:login-submit:finish');
+      setIsSubmitting(false);
     }
-    setIsSubmitting(false);
   };
 
   const handleRegister = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -304,7 +505,7 @@ export default function App() {
     if (!name) missingFields.push('Nome');
     if (!email) missingFields.push('E-mail');
     if (!password) missingFields.push('Senha');
-    if (!champion) missingFields.push('Campeão');
+    if (!champion) missingFields.push('CampeÃ£o');
     if (!photoUrl) missingFields.push('Foto');
 
     if (missingFields.length > 0) {
@@ -337,7 +538,7 @@ export default function App() {
     }
 
     const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
-      redirectTo: 'http://192.168.1.14:3000/',
+      redirectTo: getPasswordRecoveryRedirectUrl(),
     });
 
     if (error) {
@@ -345,7 +546,7 @@ export default function App() {
       return;
     }
 
-    toast.success('Enviamos o link de redefinição para seu e-mail.');
+    toast.success('Enviamos o link de redefiniÃ§Ã£o para seu e-mail.');
   };
 
   const handleResetPassword = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -358,7 +559,7 @@ export default function App() {
     }
 
     if (resetPasswordForm.password !== resetPasswordForm.confirmPassword) {
-      setResetPasswordError('As senhas não coincidem.');
+      setResetPasswordError('As senhas nÃ£o coincidem.');
       return;
     }
 
@@ -378,7 +579,7 @@ export default function App() {
     setIsResetPassword(false);
     setIsForgotPassword(false);
     setIsRegistering(false);
-    toast.success('Senha redefinida com sucesso. Faça login com a nova senha.');
+    toast.success('Senha redefinida com sucesso. FaÃ§a login com a nova senha.');
   };
 
   const getPointsRuleLabel = (bet: Bet, match: Match) => {
@@ -388,10 +589,10 @@ export default function App() {
     if (points === SCORING_RULES.DRAW) return 'Empate';
     if (points === SCORING_RULES.WINNER) return 'Vencedor';
     if (points === SCORING_RULES.INVERTED) return 'Placar invertido';
-    return 'Sem pontuação';
+    return 'Sem pontuaÃ§Ã£o';
   };
 
-  const handleAddMatch = (e: React.FormEvent) => {
+  const handleAddMatch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMatch.homeTeam || !newMatch.awayTeam || !newMatch.date) {
       toast.error('Preencha todos os campos do jogo.');
@@ -408,13 +609,13 @@ export default function App() {
       awayFlagUrl: newMatch.awayFlagUrl,
     };
 
-    if (editingMatchId) {
-      updateMatch(editingMatchId, matchData);
-      toast.success('Jogo atualizado com sucesso!');
-    } else {
-      addMatch(matchData);
-      toast.success('Jogo cadastrado com sucesso!');
-    }
+    const saved = editingMatchId
+      ? await updateMatch(editingMatchId, matchData)
+      : await addMatch(matchData);
+
+    if (!saved) return;
+
+    toast.success(editingMatchId ? 'Jogo atualizado com sucesso!' : 'Jogo cadastrado com sucesso!');
 
     setNewMatch({ 
       homeTeam: '', 
@@ -443,24 +644,82 @@ export default function App() {
     setIsMatchDialogOpen(true);
   };
 
-  const handlePlaceBet = () => {
-    if (selectedMatch) {
-      placeBet(selectedMatch.id, betScores.home, betScores.away);
+  const handlePlaceBet = async () => {
+    if (!currentUser) {
+      toast.error('FaÃ§a login para inserir palpites.');
+      return;
+    }
+
+    if (!selectedMatch || isPlacingBet) return;
+
+    setIsPlacingBet(true);
+    const homeScore = betScores.home === '' ? 0 : Number(betScores.home);
+    const awayScore = betScores.away === '' ? 0 : Number(betScores.away);
+    console.info('[bet-mobile] ui:save-click', {
+      matchId: selectedMatch.id,
+      homeScore,
+      awayScore,
+      rawHome: betScores.home,
+      rawAway: betScores.away,
+    });
+
+    if (!Number.isInteger(homeScore) || !Number.isInteger(awayScore)) {
+      toast.error('Informe placares vÃ¡lidos antes de salvar.');
+      setIsPlacingBet(false);
+      return;
+    }
+
+    try {
+      const saved = await placeBet(selectedMatch.id, homeScore, awayScore);
+      console.info('[bet-mobile] ui:save-result', { saved, matchId: selectedMatch.id });
+      if (!saved) return;
+
+      recordBetAudit('create_or_update_bet', {
+        matchId: selectedMatch.id,
+        match: `${selectedMatch.homeTeam} vs ${selectedMatch.awayTeam}`,
+        homeScore,
+        awayScore,
+      });
       setSelectedMatch(null);
       toast.success('Palpite salvo!');
+    } finally {
+      console.info('[bet-mobile] ui:save-finish', { matchId: selectedMatch.id });
+      setIsPlacingBet(false);
     }
+  };
+
+  const handleClearBetScores = () => {
+    if (!currentUser) {
+      toast.error('FaÃ§a login para limpar palpites.');
+      return;
+    }
+
+    openConfirmationDialog({
+      title: 'Limpar Palpites',
+      message: 'Deseja realmente limpar todos os palpites preenchidos?',
+      confirmLabel: 'Limpar Palpites',
+      destructive: true,
+      onConfirm: () => {
+        setBetScores({ home: '', away: '' });
+        recordBetAudit('clear_bet_fields', {
+          matchId: selectedMatch?.id,
+          match: selectedMatch ? `${selectedMatch.homeTeam} vs ${selectedMatch.awayTeam}` : undefined,
+        });
+        toast.success('Palpites removidos com sucesso.');
+      },
+    });
   };
 
   const handleSavePrizes = (e: React.FormEvent) => {
     e.preventDefault();
     setPrizeSettings(prizeForm);
-    toast.success('Regras de premiação atualizadas!');
+    toast.success('Regras de premiaÃ§Ã£o atualizadas!');
   };
 
   const handleToggleBetsLock = () => {
     const hasPending = usersWithPendingBets.some(u => u.pendingCount > 0 && !u.isAdmin);
     if (!state.settings.betsLocked && hasPending) {
-      toast.error('Não é possível bloquear os palpites enquanto houver participantes com palpites pendentes.');
+      toast.error('NÃ£o Ã© possÃ­vel bloquear os palpites enquanto houver participantes com palpites pendentes.');
       setIsPendingBetsOpen(true);
       return;
     }
@@ -483,12 +742,12 @@ export default function App() {
   const prizes = calculatePrizeValues();
 
   if (!currentUser && !isRegistering && !isForgotPassword && !isResetPassword) {
-    // Função para testar conexão com Supabase
+    // FunÃ§Ã£o para testar conexÃ£o com Supabase
     const handleTestSupabase = async () => {
       try {
         const { error } = await supabase.from('settings').select('*').limit(1);
         if (error) throw error;
-        toast.success('Conexão com Supabase OK!');
+        toast.success('ConexÃ£o com Supabase OK!');
       } catch (err) {
         toast.error('Erro ao conectar no Supabase: ' + (err?.message || err));
       }
@@ -516,14 +775,14 @@ export default function App() {
                 referrerPolicy="no-referrer"
               />
             </div>
-            <CardTitle className="text-3xl font-bold tracking-tight text-slate-900">Bolão da Copa {state.settings.year}</CardTitle>
+            <CardTitle className="text-3xl font-bold tracking-tight text-slate-900">BolÃ£o da Copa {state.settings.year}</CardTitle>
             <CardDescription>Acesse sua conta para palpitar</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-                        {/* Botão de teste removido */}
+                        {/* BotÃ£o de teste removido */}
             {!supabaseReady && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                <p className="font-semibold">Supabase não configurado</p>
+                <p className="font-semibold">Supabase nÃ£o configurado</p>
                 <p>{supabaseConfigError}</p>
                 <p className="mt-1">Depois disso, execute o arquivo supabase/schema.sql no SQL Editor do projeto.</p>
               </div>
@@ -550,7 +809,7 @@ export default function App() {
                 <Input 
                   id="login-password" 
                   type={showPassword ? "text" : "password"}
-                  placeholder="••••••••" 
+                  placeholder="********" 
                   value={loginForm.password}
                   onChange={(e) => setLoginForm(prev => ({ ...prev, password: e.target.value }))}
                   className="pr-10"
@@ -579,14 +838,14 @@ export default function App() {
                     'Entrar'
                   )}
                 </Button>
-                {canInstallApp && (
+                {canOfferInstallApp && (
                   <Button
                     type="button"
                     variant="outline"
                     className="w-full h-11 gap-2"
                     onClick={handleInstallApp}
                   >
-                    <Download className="w-4 h-4" /> Instalar aplicativo
+                    <Download className="w-4 h-4" /> {canInstallApp ? 'Instalar aplicativo' : 'Adicionar Ã  tela inicial'}
                   </Button>
                 )}
                 <Button
@@ -615,7 +874,7 @@ export default function App() {
             {state.settings.betsLocked ? (
               <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900 text-center font-medium animate-in fade-in">
                 <Lock className="w-4 h-4 inline-block mr-2 -mt-1" />
-                O Bolão está fechado para novos cadastros
+                O BolÃ£o estÃ¡ fechado para novos cadastros
               </div>
             ) : (
               <Button 
@@ -632,7 +891,7 @@ export default function App() {
                 {appInfoLabel}
               </span>
               <a
-                href="http://www.inovaflowtec.com.br"
+                href="https://www.inovaflowtec.com.br"
                 target="_blank"
                 rel="noreferrer"
                 className="text-[11px] font-medium text-slate-600 hover:text-slate-900 underline underline-offset-2"
@@ -652,7 +911,7 @@ export default function App() {
         <Card className="w-full max-w-md border-none shadow-xl">
           <CardHeader>
             <CardTitle className="text-2xl font-bold">Esqueci minha senha</CardTitle>
-            <CardDescription>Digite seu e-mail para receber o link de redefinição.</CardDescription>
+            <CardDescription>Digite seu e-mail para receber o link de redefiniÃ§Ã£o.</CardDescription>
           </CardHeader>
           <form onSubmit={handleForgotPassword}>
             <CardContent className="space-y-4">
@@ -781,13 +1040,13 @@ export default function App() {
         <Card className="w-full max-w-md border-none shadow-xl">
           <CardHeader>
             <CardTitle className="text-2xl font-bold">Novo Cadastro</CardTitle>
-            <CardDescription>Preencha os dados para entrar no bolão</CardDescription>
+            <CardDescription>Preencha os dados para entrar no bolÃ£o</CardDescription>
           </CardHeader>
           <form onSubmit={handleRegister} autoComplete="off">
             <CardContent className="space-y-4">
               {registerErrors.length > 0 && (
                 <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                  <strong>Preencha os campos obrigatórios:</strong>
+                  <strong>Preencha os campos obrigatÃ³rios:</strong>
                   <ul className="mt-1 list-disc pl-5">
                     {registerErrors.map((field) => (
                       <li key={field}>{field}</li>
@@ -862,10 +1121,10 @@ export default function App() {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="champion">Quem será o Campeão?</Label>
+                <Label htmlFor="champion">Quem serÃ¡ o CampeÃ£o?</Label>
                 <Select value={registerForm.champion} onValueChange={(value) => setRegisterForm(prev => ({ ...prev, champion: value }))} required>
                   <SelectTrigger className="h-12">
-                    <SelectValue placeholder="Selecione um país" />
+                    <SelectValue placeholder="Selecione um paÃ­s" />
                   </SelectTrigger>
                   <SelectContent>
                     {COUNTRIES.map(c => (
@@ -878,7 +1137,7 @@ export default function App() {
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-slate-500 italic">* Esta escolha não poderá ser alterada depois.</p>
+                <p className="text-xs text-slate-500 italic">* Esta escolha nÃ£o poderÃ¡ ser alterada depois.</p>
               </div>
             </CardContent>
             <CardFooter className="flex gap-2 mt-2 border-t border-slate-100 pt-4">
@@ -905,7 +1164,7 @@ export default function App() {
 
   return (
     <div className={`min-h-screen bg-slate-50 font-sans pb-20 md:pb-0 relative overflow-hidden${forceChangeOpen ? ' overflow-hidden fixed w-full h-full' : ''}`}>
-        {/* Modal obrigatório de troca de senha provisória */}
+        {/* Modal obrigatÃ³rio de troca de senha provisÃ³ria */}
         <ForceChangePasswordModal open={forceChangeOpen} onChangeSuccess={() => setForceChangeOpen(false)} />
       {/* Background Image with Transparency */}
       <div 
@@ -919,9 +1178,44 @@ export default function App() {
       
       <div className="relative z-10">
         <Toaster position="top-center" />
+        <Dialog open={isIosInstallHelpOpen} onOpenChange={setIsIosInstallHelpOpen}>
+          <DialogContent className="sm:max-w-[420px]">
+            <DialogHeader>
+              <DialogTitle>Adicionar Ã  Tela de InÃ­cio</DialogTitle>
+              <DialogDescription>
+                No Safari do iPhone ou iPad, a instalaÃ§Ã£o Ã© feita pelo menu de compartilhamento.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="flex items-start gap-3 rounded-lg border bg-slate-50 p-3">
+                <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-slate-900 shadow-sm">
+                  <Share2 className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Toque em Compartilhar</p>
+                  <p className="text-xs text-slate-600">Use o botÃ£o quadrado com seta para cima na barra do Safari.</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 rounded-lg border bg-slate-50 p-3">
+                <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-slate-900 shadow-sm">
+                  <PlusSquare className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Escolha Adicionar Ã  Tela de InÃ­cio</p>
+                  <p className="text-xs text-slate-600">Confirme em Adicionar para abrir o bolÃ£o como app.</p>
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" onClick={() => setIsIosInstallHelpOpen(false)}>
+                Entendi
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         
         {/* Header */}
-      <header className="bg-white border-b sticky top-0 z-10 px-4 py-3 md:px-8 flex items-center justify-between shadow-sm">
+      <header className="bg-white border-b sticky top-0 z-40 px-4 py-3 md:px-8 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-2">
           <div className="w-10 h-10 rounded-full bg-white border-2 border-slate-100 flex items-center justify-center overflow-hidden">
             <img 
@@ -931,23 +1225,27 @@ export default function App() {
               referrerPolicy="no-referrer"
             />
           </div>
-          <h1 className="text-xl font-bold tracking-tight hidden sm:block">Bolão da Copa {state.settings.year}</h1>
+          <h1 className="text-xl font-bold tracking-tight hidden sm:block">BolÃ£o da Copa {state.settings.year}</h1>
         </div>
 
-          <div className="flex items-center gap-4">
-            <Dialog>
-              <DialogTrigger>
-                <Button variant="outline" size="sm" className="hidden sm:flex gap-2 border-yellow-200 bg-yellow-50 text-yellow-700 hover:bg-yellow-100">
-                  <Trophy className="w-4 h-4" /> Regras de Premiação
+          <div className="flex min-w-0 items-center gap-2 sm:gap-4">
+            <Dialog open={isPrizeRulesOpen} onOpenChange={setIsPrizeRulesOpen}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  aria-label="Regras de PremiaÃ§Ã£o"
+                  onClick={() => setIsPrizeRulesOpen(true)}
+                  className="hidden"
+                >
+                  <Trophy className="w-4 h-4" /> Regras de PremiaÃ§Ã£o
                 </Button>
-              </DialogTrigger>
               <DialogContent className="sm:max-w-[425px]">
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2">
-                    <Trophy className="w-5 h-5 text-yellow-500" /> Regras de Premiação
+                    <Trophy className="w-5 h-5 text-yellow-500" /> Regras de PremiaÃ§Ã£o
                   </DialogTitle>
                   <CardDescription>
-                    Confira como será distribuído o prêmio total do bolão.
+                    Confira como serÃ¡ distribuÃ­do o prÃªmio total do bolÃ£o.
                   </CardDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
@@ -958,60 +1256,173 @@ export default function App() {
                   <div className="space-y-3">
                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-yellow-400 flex items-center justify-center text-white font-bold">1º</div>
+                        <div className="w-8 h-8 rounded-full bg-yellow-400 flex items-center justify-center text-white font-bold">1Âº</div>
                         <span className="font-bold text-sm">Primeiro Lugar ({state.settings.prizes.firstPlacePercent}%)</span>
                       </div>
                       <span className="font-black text-slate-900">R$ {prizes.first.toFixed(2)}</span>
                     </div>
                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-slate-300 flex items-center justify-center text-slate-700 font-bold">2º</div>
+                        <div className="w-8 h-8 rounded-full bg-slate-300 flex items-center justify-center text-slate-700 font-bold">2Âº</div>
                         <span className="font-bold text-sm">Segundo Lugar ({state.settings.prizes.secondPlacePercent}%)</span>
                       </div>
                       <span className="font-black text-slate-900">R$ {prizes.second.toFixed(2)}</span>
                     </div>
                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-orange-300 flex items-center justify-center text-orange-800 font-bold">3º</div>
+                        <div className="w-8 h-8 rounded-full bg-orange-300 flex items-center justify-center text-orange-800 font-bold">3Âº</div>
                         <span className="font-bold text-sm">Terceiro Lugar ({state.settings.prizes.thirdPlacePercent}%)</span>
                       </div>
                       <span className="font-black text-slate-900">R$ {prizes.third.toFixed(2)}</span>
                     </div>
                     <div className="flex items-center justify-between p-3 bg-yellow-50 rounded-lg border border-yellow-100">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-yellow-500 flex items-center justify-center text-white font-bold">🏆</div>
-                        <span className="font-bold text-sm">Acertar Campeão ({state.settings.prizes.championBonusPercent}%)</span>
+                        <div className="w-8 h-8 rounded-full bg-yellow-500 flex items-center justify-center text-white font-bold">C</div>
+                        <span className="font-bold text-sm">Acertar CampeÃ£o ({state.settings.prizes.championBonusPercent}%)</span>
                       </div>
                       <span className="font-black text-yellow-700">R$ {prizes.champion.toFixed(2)}</span>
                     </div>
                   </div>
                   <p className="text-[10px] text-slate-400 text-center italic">
-                    * Os valores são calculados com base no total de participantes que confirmaram o pagamento.
+                    * Os valores sÃ£o calculados com base no total de participantes que confirmaram o pagamento.
                   </p>
                 </div>
               </DialogContent>
             </Dialog>
 
-            <div className="flex flex-col items-end">
-              <span className="text-sm font-semibold">{currentUser?.name}</span>
-              <div className="flex items-center gap-1.5">
+            <div className="min-w-0 max-w-[120px] sm:max-w-[220px] flex flex-col items-end">
+              <span className="max-w-full truncate whitespace-nowrap text-sm font-semibold">{currentUser?.name}</span>
+              <div className="flex max-w-full items-center gap-1.5">
                 <Badge variant={currentUser?.isPaid ? "success" : "destructive"} className="text-[10px] px-1.5 py-0 h-4">
                   {currentUser?.isPaid ? 'Pago' : 'Pendente'}
                 </Badge>
-                <span className="text-xs font-bold text-green-600">{currentUser?.totalPoints} pts</span>
+                <span className="shrink-0 text-xs font-bold text-green-600">{currentUser?.totalPoints} pts</span>
               </div>
-              <Button variant="link" size="sm" className="p-0 mt-1 text-blue-700 hover:underline" onClick={() => setIsChangePasswordOpen(true)}>
-                Alterar Senha
-              </Button>
             </div>
-          <Avatar className="h-10 w-10 border-2 border-slate-100">
-            <AvatarImage src={currentUser?.photoUrl} />
-            <AvatarFallback>{currentUser?.name[0]}</AvatarFallback>
-          </Avatar>
-          <Button variant="ghost" size="icon" onClick={logout} className="text-slate-500">
-            <LogOut className="w-5 h-5" />
-          </Button>
+          <div className="relative shrink-0" ref={userMenuRef}>
+            <input
+              ref={profilePhotoInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleProfilePhotoChange}
+            />
+            <button
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={isUserMenuOpen}
+              aria-label="Menu do usuario"
+              onClick={() => setIsUserMenuOpen(open => !open)}
+              className="rounded-full outline-none ring-offset-2 transition focus-visible:ring-2 focus-visible:ring-slate-900"
+            >
+              <Avatar className="h-10 w-10 border-2 border-slate-100">
+                <AvatarImage src={currentUser?.photoUrl} />
+                <AvatarFallback>{currentUser?.name[0]}</AvatarFallback>
+              </Avatar>
+            </button>
+            {isUserMenuOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 top-12 z-50 w-52 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-xl"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isUpdatingPhoto}
+                  onClick={() => {
+                    setIsUserMenuOpen(false);
+                    profilePhotoInputRef.current?.click();
+                  }}
+                >
+                  <Camera className="h-4 w-4 text-slate-400" />
+                  {isUpdatingPhoto ? 'Atualizando foto...' : 'Alterar foto'}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={state.settings.betsLocked}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => {
+                    if (state.settings.betsLocked) return;
+                    setIsUserMenuOpen(false);
+                    openChampionDialog();
+                  }}
+                >
+                  <Flag className="h-4 w-4 text-slate-400" />
+                  Alterar PaÃ­s
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  onClick={() => {
+                    setIsUserMenuOpen(false);
+                    setIsChangePasswordOpen(true);
+                  }}
+                >
+                  <Lock className="h-4 w-4 text-slate-400" />
+                  Alterar senha
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-red-600 hover:bg-red-50"
+                  onClick={() => {
+                    setIsUserMenuOpen(false);
+                    logout();
+                  }}
+                >
+                  <LogOut className="h-4 w-4" />
+                  Sair
+                </button>
+              </div>
+            )}
+          </div>
           <ChangePasswordModal open={isChangePasswordOpen} onClose={() => setIsChangePasswordOpen(false)} />
+          <Dialog open={isChampionDialogOpen} onOpenChange={setIsChampionDialogOpen}>
+            <DialogContent className="sm:max-w-[420px]">
+              <DialogHeader>
+                <DialogTitle>Alterar PaÃ­s</DialogTitle>
+                <DialogDescription>
+                  Escolha o paÃ­s campeÃ£o do seu perfil.
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleChampionSubmit} className="space-y-4">
+                <div className="space-y-2">
+                  <Label>PaÃ­s campeÃ£o</Label>
+                  <Select value={championFormValue} onValueChange={setChampionFormValue}>
+                    <SelectTrigger className="h-11">
+                      <SelectValue placeholder="Selecione um paÃ­s" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {COUNTRIES.map(country => (
+                        <SelectItem key={country.name} value={country.name}>
+                          <span className="flex items-center gap-2">
+                            <span>{country.flag}</span>
+                            <span>{country.name}</span>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setIsChampionDialogOpen(false)}
+                    disabled={isUpdatingChampion}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button type="submit" disabled={isUpdatingChampion || !championFormValue}>
+                    {isUpdatingChampion ? 'Salvando...' : 'Salvar'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
         </div>
       </header>
 
@@ -1036,19 +1447,44 @@ export default function App() {
                     <path d="m12 12-4-4m4 4 4-4m-4 4-4 4m4-4 4 4" />
                   </svg>
                 </div>
-                Painel do Bolão
+                Painel do BolÃ£o
               </h3>
             </div>
             <CardContent className="p-4 space-y-4">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <div className="space-y-1">
-                  <p className="text-sm font-bold text-slate-900">Regras de pontuação</p>
-                  <p className="text-xs text-slate-600">Consulte como os pontos são calculados em cada jogo.</p>
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label="Abrir regras de pontuaÃ§Ã£o"
+                    className="h-11 w-11 rounded-full border-slate-200 bg-white text-amber-500 hover:bg-amber-50 hover:text-amber-600"
+                    onClick={() => setIsScoringRulesOpen(true)}
+                  >
+                    <Trophy className="w-5 h-5" />
+                  </Button>
+                  <div className="min-w-0 space-y-1">
+                    <p className="text-sm font-bold text-slate-900">Regras de pontuaÃ§Ã£o</p>
+                    <p className="text-xs text-slate-600">Consulte como os pontos sÃ£o calculados em cada jogo.</p>
+                  </div>
                 </div>
-                <Button variant="outline" className="mt-3 w-full gap-2" onClick={() => setIsScoringRulesOpen(true)}>
-                  <Trophy className="w-4 h-4" /> Ver regras
-                </Button>
               </div>
+
+              <button
+                type="button"
+                aria-label="Abrir regras de premiaÃ§Ã£o"
+                onClick={() => setIsPrizeRulesOpen(true)}
+                className="w-full rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-left transition hover:bg-yellow-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-yellow-200">
+                    <Trophy className="w-5 h-5 text-yellow-500" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-slate-900">Regras de premiaÃ§Ã£o</p>
+                    <p className="text-xs text-slate-600">Confira a distribuiÃ§Ã£o dos prÃªmios.</p>
+                  </div>
+                </div>
+              </button>
 
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-slate-600">
@@ -1073,7 +1509,7 @@ export default function App() {
                     ) : (
                       <Unlock className="w-4 h-4 text-emerald-500" />
                     )}
-                    <span className="text-xs font-bold text-slate-700">Status do Bolão</span>
+                    <span className="text-xs font-bold text-slate-700">Status do BolÃ£o</span>
                   </div>
                   <Badge 
                     variant={state.settings.betsLocked ? "destructive" : "success"}
@@ -1123,7 +1559,7 @@ export default function App() {
               </div>
 
               <div className="pt-4 border-t">
-                <p className="text-xs text-slate-400 uppercase font-bold mb-3">Últimos Resultados</p>
+                <p className="text-xs text-slate-400 uppercase font-bold mb-3">Ãšltimos Resultados</p>
                 <div className="space-y-2">
                   {state.matches.filter(m => m.status === 'finished').slice(-5).reverse().map(match => (
                     <div key={match.id} className="flex items-center justify-between bg-slate-50 p-2 rounded-md border border-slate-100">
@@ -1173,7 +1609,7 @@ export default function App() {
             <Card className="border-none shadow-md border-l-4 border-l-slate-900">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
-                  <Shield className="w-4 h-4" /> Gestão
+                  <Shield className="w-4 h-4" /> GestÃ£o
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
@@ -1190,14 +1626,14 @@ export default function App() {
                   className="w-full justify-start gap-2 text-xs bg-slate-900"
                   onClick={() => setActiveTab('admin')}
                 >
-                  <Shield className="w-3 h-3" /> Acessar Gestão Completa
+                  <Shield className="w-3 h-3" /> Acessar GestÃ£o Completa
                 </Button>
                 <Button 
                   variant="secondary" 
                   className="w-full justify-start gap-2 text-xs"
                   onClick={() => setActiveTab('admin')}
                 >
-                  <Calendar className="w-3 h-3" /> Lançar Resultados
+                  <Calendar className="w-3 h-3" /> LanÃ§ar Resultados
                 </Button>
               </CardContent>
             </Card>
@@ -1211,7 +1647,7 @@ export default function App() {
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
                   <p className="text-sm font-bold text-emerald-800">Grupo oficial no WhatsApp</p>
-                  <p className="text-xs text-slate-600">Acesse o link para entrar no grupo e acompanhar os avisos do bolão.</p>
+                  <p className="text-xs text-slate-600">Acesse o link para entrar no grupo e acompanhar os avisos do bolÃ£o.</p>
                 </div>
                 <a href={whatsappGroupUrl} target="_blank" rel="noreferrer" className="w-full sm:w-auto">
                   <Button className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 gap-2">
@@ -1221,16 +1657,16 @@ export default function App() {
               </div>
             </CardContent>
           </Card>
-          {canInstallApp && (
+          {canOfferInstallApp && (
             <Card className="border-none shadow-md bg-gradient-to-r from-slate-900 to-slate-800 text-white">
               <CardContent className="py-4 px-4 sm:px-6">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                   <div>
-                    <p className="text-sm font-bold">Instale o app no seu aparelho</p>
-                    <p className="text-xs text-slate-300">Abra o bolão em tela cheia e acesse mais rápido direto da tela inicial.</p>
+                    <p className="text-sm font-bold">{canInstallApp ? 'Instale o app no seu aparelho' : 'Adicione o bolÃ£o Ã  tela inicial'}</p>
+                    <p className="text-xs text-slate-300">Abra em tela cheia e acesse mais rÃ¡pido direto da tela inicial.</p>
                   </div>
                   <Button variant="secondary" className="w-full sm:w-auto gap-2" onClick={handleInstallApp}>
-                    <Download className="w-4 h-4" /> Instalar app
+                    <Download className="w-4 h-4" /> {canInstallApp ? 'Instalar app' : 'Ver como adicionar'}
                   </Button>
                 </div>
               </CardContent>
@@ -1249,10 +1685,10 @@ export default function App() {
                   {currentUser?.isAdmin && (
                     <>
                       <TabsTrigger value="users" className="gap-2">
-                        <Users className="w-4 h-4" /> Usuários
+                        <Users className="w-4 h-4" /> UsuÃ¡rios
                       </TabsTrigger>
                       <TabsTrigger value="admin" className="gap-2">
-                        <Shield className="w-4 h-4" /> Gestão
+                        <Shield className="w-4 h-4" /> GestÃ£o
                       </TabsTrigger>
                     </>
                   )}
@@ -1263,31 +1699,52 @@ export default function App() {
                 <h2 className="text-2xl font-black text-slate-900 flex items-center gap-2">
                   {activeTab === 'matches' && <><Calendar className="w-6 h-6 text-slate-900" /> Jogos</>}
                   {activeTab === 'ranking' && <><Trophy className="w-6 h-6 text-slate-900" /> Ranking</>}
-                  {activeTab === 'users' && <><Users className="w-6 h-6 text-slate-900" /> Usuários</>}
-                  {activeTab === 'admin' && <><Shield className="w-6 h-6 text-slate-900" /> Gestão</>}
+                  {activeTab === 'users' && <><Users className="w-6 h-6 text-slate-900" /> UsuÃ¡rios</>}
+                  {activeTab === 'admin' && <><Shield className="w-6 h-6 text-slate-900" /> GestÃ£o</>}
                 </h2>
-                <div className="w-full overflow-hidden rounded-3xl border border-slate-900/10 bg-gradient-to-br from-amber-100 via-white to-emerald-50 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.10)]">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-2">
+                <div className="w-full overflow-hidden rounded-3xl border border-slate-900/10 bg-gradient-to-br from-sky-100 via-white to-emerald-50 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.10)]">
+                  <div className="flex items-start gap-3">
+                    <button
+                      type="button"
+                      aria-label="Abrir regras de pontuaÃ§Ã£o"
+                      onClick={() => setIsScoringRulesOpen(true)}
+                      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white text-amber-500 shadow-sm ring-1 ring-slate-900/10 transition hover:bg-amber-50 hover:text-amber-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+                    >
+                      <Trophy className="w-5 h-5" />
+                    </button>
+                    <div className="min-w-0 space-y-2">
                       <div className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-[10px] font-black uppercase tracking-[0.24em] text-white">
                         <Trophy className="w-3 h-3" />
-                        Pontuação
+                        PontuaÃ§Ã£o
                       </div>
                       <div className="space-y-1">
-                        <p className="text-base font-black text-slate-900">Regras de pontuação</p>
-                        <p className="max-w-[240px] text-xs leading-relaxed text-slate-600">Consulte a tabela de pontos também no celular e tablet.</p>
+                        <p className="text-base font-black text-slate-900">Regras de pontuaÃ§Ã£o</p>
+                        <p className="max-w-[240px] text-xs leading-relaxed text-slate-600">Consulte como os pontos e desempates sÃ£o calculados.</p>
                       </div>
                     </div>
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/80 shadow-sm ring-1 ring-slate-900/5">
-                      <Trophy className="w-5 h-5 text-amber-500" />
+                  </div>
+                </div>
+                <div className="w-full overflow-hidden rounded-3xl border border-yellow-200 bg-yellow-50 p-4 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <button
+                      type="button"
+                      aria-label="Abrir regras de premiaÃ§Ã£o"
+                      onClick={() => setIsPrizeRulesOpen(true)}
+                      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white text-yellow-500 shadow-sm ring-1 ring-yellow-200 transition hover:bg-yellow-100 hover:text-yellow-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+                    >
+                      <Trophy className="w-5 h-5" />
+                    </button>
+                    <div className="min-w-0 space-y-2">
+                      <div className="inline-flex items-center gap-2 rounded-full bg-yellow-500 px-3 py-1 text-[10px] font-black uppercase tracking-[0.24em] text-white">
+                        <Trophy className="w-3 h-3" />
+                        PremiaÃ§Ã£o
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-base font-black text-slate-900">Regras de premiaÃ§Ã£o</p>
+                        <p className="max-w-[240px] text-xs leading-relaxed text-slate-600">Confira como serÃ¡ distribuÃ­do o prÃªmio total do bolÃ£o.</p>
+                      </div>
                     </div>
                   </div>
-                  <Button className="mt-4 w-full justify-between rounded-2xl bg-slate-900 text-white hover:bg-slate-800" onClick={() => setIsScoringRulesOpen(true)}>
-                    <span className="flex items-center gap-2">
-                      <Trophy className="w-4 h-4" /> Ver regras
-                    </span>
-                    <span className="text-xs font-bold uppercase tracking-[0.2em] text-white/70">Abrir</span>
-                  </Button>
                 </div>
                 {activeTab === 'matches' && (
                   <div className="w-full space-y-3">
@@ -1371,7 +1828,7 @@ export default function App() {
                           <div className="bg-slate-50 px-4 py-2 flex justify-between items-center border-b">
                             <div className="flex flex-col">
                               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                                Grupo {match.group} • {formatMatchDate(match.date)}
+                                Grupo {match.group} â€¢ {formatMatchDate(match.date)}
                               </span>
                               {match.location && (
                                 <span className="text-[9px] text-slate-400 flex items-center gap-1">
@@ -1446,12 +1903,12 @@ export default function App() {
                                       onClick={() => {
                                         setSelectedMatch(match);
                                         setBetScores({ 
-                                          home: userBet?.homeScore ?? 0, 
-                                          away: userBet?.awayScore ?? 0 
+                                          home: String(userBet?.homeScore ?? 0), 
+                                          away: String(userBet?.awayScore ?? 0) 
                                         });
                                       }}
                                     >
-                                      {userBet ? 'Alterar Palpite' : 'Lançar Palpite'}
+                                      {userBet ? 'Alterar Palpite' : 'LanÃ§ar Palpite'}
                                     </Button>
                                   </DialogTrigger>
                                   <DialogContent className="sm:max-w-[425px] bg-white/95 backdrop-blur-sm border-none shadow-2xl">
@@ -1465,26 +1922,37 @@ export default function App() {
                                       <div className="flex flex-col items-center gap-3">
                                         <span className="font-bold text-sm">{match.homeTeam}</span>
                                         <Input 
-                                          type="number" 
-                                          className="w-20 h-20 text-center text-4xl font-black border-2 focus:border-yellow-400" 
+                                          type="text"
+                                          inputMode="numeric"
+                                          pattern="[0-9]*"
+                                          maxLength={2}
+                                          placeholder="0"
+                                          className="w-20 h-20 px-0 text-center text-4xl font-black border-2 focus:border-yellow-400" 
                                           value={betScores.home}
-                                          onChange={(e) => setBetScores(prev => ({ ...prev, home: parseInt(e.target.value) || 0 }))}
+                                          onChange={(e) => setBetScores(prev => ({ ...prev, home: sanitizeScoreInput(e.target.value) }))}
                                         />
                                       </div>
                                       <span className="text-4xl font-black text-slate-200">X</span>
                                       <div className="flex flex-col items-center gap-3">
                                         <span className="font-bold text-sm">{match.awayTeam}</span>
                                         <Input 
-                                          type="number" 
-                                          className="w-20 h-20 text-center text-4xl font-black border-2 focus:border-yellow-400" 
+                                          type="text"
+                                          inputMode="numeric"
+                                          pattern="[0-9]*"
+                                          maxLength={2}
+                                          placeholder="0"
+                                          className="w-20 h-20 px-0 text-center text-4xl font-black border-2 focus:border-yellow-400" 
                                           value={betScores.away}
-                                          onChange={(e) => setBetScores(prev => ({ ...prev, away: parseInt(e.target.value) || 0 }))}
+                                          onChange={(e) => setBetScores(prev => ({ ...prev, away: sanitizeScoreInput(e.target.value) }))}
                                         />
                                       </div>
                                     </div>
-                                    <DialogFooter>
-                                      <Button className="w-full h-12 text-lg font-bold bg-slate-900 hover:bg-slate-800" onClick={handlePlaceBet}>
-                                        Confirmar Palpite
+                                    <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                                      <Button variant="outline" className="h-11 gap-2 text-slate-500 hover:text-slate-900" onClick={handleClearBetScores} disabled={isPlacingBet}>
+                                        <Eraser className="w-4 h-4" /> Limpar Palpites
+                                      </Button>
+                                      <Button className="h-12 text-lg font-bold bg-slate-900 hover:bg-slate-800 sm:flex-1" onClick={handlePlaceBet} disabled={isPlacingBet}>
+                                        {isPlacingBet ? 'Salvando...' : 'Confirmar Palpite'}
                                       </Button>
                                     </DialogFooter>
                                   </DialogContent>
@@ -1502,9 +1970,18 @@ export default function App() {
                                   variant="outline" 
                                   size="sm" 
                                   className="w-full h-8 text-[10px] font-bold gap-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 border-slate-200"
-                                  onClick={() => setViewingBetsMatch(match)}
+                                  disabled={loadingMatchBetsId === match.id}
+                                  onClick={async () => {
+                                    setViewingBetsMatch(match);
+                                    setLoadingMatchBetsId(match.id);
+                                    try {
+                                      await loadMatchBets(match.id);
+                                    } finally {
+                                      setLoadingMatchBetsId(current => current === match.id ? null : current);
+                                    }
+                                  }}
                                 >
-                                  <Users className="w-3 h-3" /> Ver Palpites de Todos
+                                  <Users className="w-3 h-3" /> {loadingMatchBetsId === match.id ? 'Carregando...' : 'Ver Palpites de Todos'}
                                 </Button>
                               </div>
 
@@ -1519,6 +1996,11 @@ export default function App() {
                                     </CardDescription>
                                   </DialogHeader>
                                   <div className="flex-1 overflow-y-auto px-6 py-6">
+                                    {loadingMatchBetsId === match.id && (
+                                      <div className="mb-4 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-center text-xs font-semibold text-slate-500">
+                                        Atualizando palpites deste jogo...
+                                      </div>
+                                    )}
                                     <div className="space-y-4 pr-2">
                                       {state.users.map(user => {
                                         const bet = state.bets.find(b => b.userId === user.id && b.matchId === match.id);
@@ -1596,8 +2078,8 @@ export default function App() {
             <TabsContent value="ranking" className="mt-0">
               <Card className="border-none shadow-md">
                 <CardHeader>
-                  <CardTitle>Classificação Geral</CardTitle>
-                  <CardDescription>Acompanhe quem está na liderança</CardDescription>
+                  <CardTitle>ClassificaÃ§Ã£o Geral</CardTitle>
+                  <CardDescription>Acompanhe quem estÃ¡ na lideranÃ§a</CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
                   {/* Desktop Table */}
@@ -1607,8 +2089,8 @@ export default function App() {
                         <tr className="bg-slate-50 text-slate-500 font-bold border-y">
                           <th className="px-6 py-3 text-left w-16">Pos</th>
                           <th className="px-6 py-3 text-left">Participante</th>
-                          <th className="px-6 py-3 text-center">Campeão</th>
-                          <th className="px-6 py-3 text-center">Chances (1º/2º/3º)</th>
+                          <th className="px-6 py-3 text-center">CampeÃ£o</th>
+                          <th className="px-6 py-3 text-center">Chances (1Âº/2Âº/3Âº)</th>
                           <th className="px-6 py-3 text-center">Status</th>
                           <th className="px-6 py-3 text-right">Pontos</th>
                         </tr>
@@ -1629,7 +2111,7 @@ export default function App() {
                                   idx === 2 ? 'bg-orange-300 text-orange-800' : 
                                   'text-slate-400'
                                 }`}>
-                                  {idx + 1}º
+                                  {idx + 1}Âº
                                 </div>
                               </td>
                               <td className="px-6 py-4">
@@ -1640,7 +2122,7 @@ export default function App() {
                                   </Avatar>
                                   <div className="flex flex-col">
                                     <span className="font-bold text-slate-900">{user.name}</span>
-                                    {user.id === currentUser?.id && <span className="text-[10px] text-yellow-600 font-bold uppercase">Você</span>}
+                                    {user.id === currentUser?.id && <span className="text-[10px] text-yellow-600 font-bold uppercase">VocÃª</span>}
                                   </div>
                                 </div>
                               </td>
@@ -1650,21 +2132,21 @@ export default function App() {
                               <td className="px-6 py-4">
                                 <div className="flex items-center justify-center gap-1">
                                   <div className="flex flex-col items-center min-w-[40px]">
-                                    <span className="text-[8px] text-slate-400 uppercase font-bold">1º</span>
+                                    <span className="text-[8px] text-slate-400 uppercase font-bold">1Âº</span>
                                     <span className={`text-[10px] font-black ${probs.p1 > 50 ? 'text-emerald-600' : probs.p1 > 20 ? 'text-yellow-600' : 'text-slate-400'}`}>
                                       {probs.p1}%
                                     </span>
                                   </div>
                                   <div className="w-[1px] h-4 bg-slate-100 mx-1" />
                                   <div className="flex flex-col items-center min-w-[40px]">
-                                    <span className="text-[8px] text-slate-400 uppercase font-bold">2º</span>
+                                    <span className="text-[8px] text-slate-400 uppercase font-bold">2Âº</span>
                                     <span className={`text-[10px] font-black ${probs.p2 > 50 ? 'text-emerald-600' : probs.p2 > 20 ? 'text-yellow-600' : 'text-slate-400'}`}>
                                       {probs.p2}%
                                     </span>
                                   </div>
                                   <div className="w-[1px] h-4 bg-slate-100 mx-1" />
                                   <div className="flex flex-col items-center min-w-[40px]">
-                                    <span className="text-[8px] text-slate-400 uppercase font-bold">3º</span>
+                                    <span className="text-[8px] text-slate-400 uppercase font-bold">3Âº</span>
                                     <span className={`text-[10px] font-black ${probs.p3 > 50 ? 'text-emerald-600' : probs.p3 > 20 ? 'text-yellow-600' : 'text-slate-400'}`}>
                                       {probs.p3}%
                                     </span>
@@ -1704,7 +2186,7 @@ export default function App() {
                                 idx === 2 ? 'bg-orange-300 text-orange-800' : 
                                 'bg-slate-100 text-slate-400'
                               }`}>
-                                {idx + 1}º
+                                {idx + 1}Âº
                               </div>
                               <Avatar className="h-10 w-10">
                                 <AvatarImage src={user.photoUrl} />
@@ -1716,7 +2198,7 @@ export default function App() {
                                   <Badge variant={user.isPaid ? "success" : "destructive"} className="text-[8px] h-4 px-1">
                                     {user.isPaid ? 'Pago' : 'Pendente'}
                                   </Badge>
-                                  {user.id === currentUser?.id && <span className="text-[8px] text-yellow-600 font-bold uppercase">Você</span>}
+                                  {user.id === currentUser?.id && <span className="text-[8px] text-yellow-600 font-bold uppercase">VocÃª</span>}
                                 </div>
                               </div>
                             </div>
@@ -1728,24 +2210,24 @@ export default function App() {
                           
                           <div className="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-100">
                             <div className="flex flex-col">
-                              <span className="text-[8px] text-slate-400 uppercase font-bold">Campeão</span>
+                              <span className="text-[8px] text-slate-400 uppercase font-bold">CampeÃ£o</span>
                               <span className="text-xs font-bold text-slate-700">{user.championPrediction}</span>
                             </div>
                             <div className="flex items-center gap-3">
                               <div className="flex flex-col items-center">
-                                <span className="text-[8px] text-slate-400 uppercase font-bold">1º</span>
+                                <span className="text-[8px] text-slate-400 uppercase font-bold">1Âº</span>
                                 <span className={`text-[10px] font-black ${probs.p1 > 50 ? 'text-emerald-600' : probs.p1 > 20 ? 'text-yellow-600' : 'text-slate-400'}`}>
                                   {probs.p1}%
                                 </span>
                               </div>
                               <div className="flex flex-col items-center">
-                                <span className="text-[8px] text-slate-400 uppercase font-bold">2º</span>
+                                <span className="text-[8px] text-slate-400 uppercase font-bold">2Âº</span>
                                 <span className={`text-[10px] font-black ${probs.p2 > 50 ? 'text-emerald-600' : probs.p2 > 20 ? 'text-yellow-600' : 'text-slate-400'}`}>
                                   {probs.p2}%
                                 </span>
                               </div>
                               <div className="flex flex-col items-center">
-                                <span className="text-[8px] text-slate-400 uppercase font-bold">3º</span>
+                                <span className="text-[8px] text-slate-400 uppercase font-bold">3Âº</span>
                                 <span className={`text-[10px] font-black ${probs.p3 > 50 ? 'text-emerald-600' : probs.p3 > 20 ? 'text-yellow-600' : 'text-slate-400'}`}>
                                   {probs.p3}%
                                 </span>
@@ -1761,7 +2243,7 @@ export default function App() {
 
               {/* User Bets Modal */}
               <Dialog open={!!viewingUserBets} onOpenChange={(open) => !open && setViewingUserBets(null)}>
-                <DialogContent className="sm:max-w-[600px] max-h-[90vh] flex flex-col p-0 overflow-hidden border-none shadow-2xl">
+                <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden border-none p-0 shadow-2xl sm:max-w-[600px]">
                   {viewingUserBets && (
                     <>
                       <DialogHeader className="p-6 bg-slate-900 text-white">
@@ -1783,7 +2265,7 @@ export default function App() {
                             <span className="text-xl font-black text-yellow-400">{viewingUserBets.totalPoints}</span>
                           </div>
                           <div className="bg-white/10 p-2 rounded-lg text-center">
-                            <span className="block text-[10px] uppercase font-bold text-slate-400">Campeão</span>
+                            <span className="block text-[10px] uppercase font-bold text-slate-400">CampeÃ£o</span>
                             <span className="text-xs font-bold truncate">{viewingUserBets.championPrediction}</span>
                           </div>
                           <div className="bg-white/10 p-2 rounded-lg text-center">
@@ -1792,9 +2274,9 @@ export default function App() {
                           </div>
                         </div>
                       </DialogHeader>
-                      <ScrollArea className="flex-1 p-6">
+                      <div className="min-h-0 flex-1 overflow-y-scroll overscroll-contain p-6 [scrollbar-color:#94a3b8_#e2e8f0] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-400">
                         <div className="space-y-3">
-                          <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Histórico de Palpites</h4>
+                          <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">HistÃ³rico de Palpites</h4>
                           {state.matches.map(match => {
                             const bet = state.bets.find(b => b.userId === viewingUserBets.id && b.matchId === match.id);
                             const isFinished = match.status === 'finished';
@@ -1847,7 +2329,7 @@ export default function App() {
                             );
                           })}
                         </div>
-                      </ScrollArea>
+                      </div>
                       <div className="p-4 bg-slate-50 border-t">
                         <Button variant="outline" className="w-full" onClick={() => setViewingUserBets(null)}>
                           Fechar Detalhes
@@ -1867,7 +2349,7 @@ export default function App() {
                       <Users className="w-5 h-5" /> Controle de Acesso e Administradores
                     </CardTitle>
                     <CardDescription>
-                      Defina quem são os administradores do sistema e gerencie o status de pagamento de todos os participantes.
+                      Defina quem sÃ£o os administradores do sistema e gerencie o status de pagamento de todos os participantes.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="p-4 space-y-3">
@@ -1902,19 +2384,25 @@ export default function App() {
                             </Badge>
                           </div>
 
-                          {/* Ações */}
+                          {/* AÃ§Ãµes */}
                           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 w-full xl:w-auto">
                             {user.id !== currentUser?.id && (
                               <Button
                                 variant="destructive"
                                 size="sm"
                                 className="w-full whitespace-nowrap"
-                                onClick={() => {
-                                  if (confirm(`Tem certeza que deseja banir ${user.name}?`)) {
-                                    deleteUser(user.id);
-                                    toast.success(`${user.name} foi banido.`);
-                                  }
-                                }}
+                                onClick={() => openConfirmationDialog({
+                                  title: 'Banir participante',
+                                  message: `Tem certeza que deseja banir ${user.name}?`,
+                                  confirmLabel: 'Banir',
+                                  destructive: true,
+                                  onConfirm: async () => {
+                                    const deleted = await deleteUser(user.id);
+                                    if (deleted) {
+                                      toast.success(`${user.name} foi banido.`);
+                                    }
+                                  },
+                                })}
                               >
                                 Banir
                               </Button>
@@ -1928,7 +2416,7 @@ export default function App() {
                                   : 'text-yellow-600 border-yellow-200 bg-yellow-50 hover:bg-yellow-100'} w-full whitespace-nowrap`}
                                 onClick={() => {
                                   toggleAdminStatus(user.id);
-                                  toast.success(`${user.name} agora é ${!user.isAdmin ? 'Administrador' : 'Participante'}`);
+                                  toast.success(`${user.name} agora Ã© ${!user.isAdmin ? 'Administrador' : 'Participante'}`);
                                 }}
                               >
                                 {user.isAdmin ? 'Remover Admin' : 'Tornar Admin'}
@@ -1965,7 +2453,7 @@ export default function App() {
                           <Calendar className="w-5 h-5 text-slate-900" /> Palpites Pendentes
                         </CardTitle>
                         <CardDescription className="text-slate-500">
-                          Visualize quem ainda não completou todos os palpites.
+                          Visualize quem ainda nÃ£o completou todos os palpites.
                         </CardDescription>
                       </div>
                       <Dialog open={isPendingBetsOpen} onOpenChange={setIsPendingBetsOpen}>
@@ -1977,7 +2465,7 @@ export default function App() {
                         <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col p-0 overflow-hidden">
                           <DialogHeader className="p-6 pb-2">
                             <DialogTitle className="flex items-center gap-2 text-xl">
-                              <Users className="w-6 h-6 text-slate-900" /> Palpites Pendentes por Usuário
+                              <Users className="w-6 h-6 text-slate-900" /> Palpites Pendentes por UsuÃ¡rio
                             </DialogTitle>
                             <CardDescription>
                               Lista de participantes e quantidade de palpites faltantes.
@@ -2005,19 +2493,25 @@ export default function App() {
                                     <div className="flex items-center gap-4">
                                       <div className="text-right">
                                         <Badge variant={user.pendingCount === 0 ? "success" : "destructive"} className="text-xs">
-                                          {user.pendingCount === 0 ? 'Concluído' : `${user.pendingCount} pendentes`}
+                                          {user.pendingCount === 0 ? 'ConcluÃ­do' : `${user.pendingCount} pendentes`}
                                         </Badge>
                                       </div>
                                       <Button 
                                         variant="ghost" 
                                         size="icon" 
                                         className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                                        onClick={() => {
-                                          if (confirm(`Tem certeza que deseja banir este participante? Todos os seus dados e palpites serão excluídos permanentemente.`)) {
-                                            deleteUser(user.id);
-                                            toast.success('Participante banido com sucesso.');
-                                          }
-                                        }}
+                                        onClick={() => openConfirmationDialog({
+                                          title: 'Banir participante',
+                                          message: 'Tem certeza que deseja banir este participante? Todos os seus dados e palpites serÃ£o excluÃ­dos permanentemente.',
+                                          confirmLabel: 'Banir',
+                                          destructive: true,
+                                          onConfirm: async () => {
+                                            const deleted = await deleteUser(user.id);
+                                            if (deleted) {
+                                              toast.success('Participante banido com sucesso.');
+                                            }
+                                          },
+                                        })}
                                       >
                                         <Trash2 className="w-4 h-4" />
                                       </Button>
@@ -2046,13 +2540,13 @@ export default function App() {
                   <Card className="border-none shadow-md">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
-                        <Shield className="w-5 h-5 text-slate-900" /> Configurações Gerais
+                        <Shield className="w-5 h-5 text-slate-900" /> ConfiguraÃ§Ãµes Gerais
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <Label htmlFor="entry-fee">Valor da Inscrição (R$)</Label>
+                          <Label htmlFor="entry-fee">Valor da InscriÃ§Ã£o (R$)</Label>
                           <div className="flex gap-2">
                             <Input 
                               id="entry-fee" 
@@ -2116,17 +2610,17 @@ export default function App() {
                   <Card className="border-none shadow-md">
                     <CardHeader>
                       <CardTitle className="text-sm flex items-center gap-2">
-                        <Trophy className="w-4 h-4" /> Regras de Premiação (%)
+                        <Trophy className="w-4 h-4" /> Regras de PremiaÃ§Ã£o (%)
                       </CardTitle>
                       <CardDescription className="text-[10px]">
-                        Defina o percentual do total arrecadado para cada prêmio.
+                        Defina o percentual do total arrecadado para cada prÃªmio.
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
                       <form onSubmit={handleSavePrizes} className="space-y-4">
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-1.5">
-                            <Label className="text-[10px] uppercase font-bold text-slate-400">1º Lugar (%)</Label>
+                            <Label className="text-[10px] uppercase font-bold text-slate-400">1Âº Lugar (%)</Label>
                             <Input 
                               type="number" 
                               value={prizeForm.firstPlacePercent} 
@@ -2134,7 +2628,7 @@ export default function App() {
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-[10px] uppercase font-bold text-slate-400">2º Lugar (%)</Label>
+                            <Label className="text-[10px] uppercase font-bold text-slate-400">2Âº Lugar (%)</Label>
                             <Input 
                               type="number" 
                               value={prizeForm.secondPlacePercent} 
@@ -2142,7 +2636,7 @@ export default function App() {
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-[10px] uppercase font-bold text-slate-400">3º Lugar (%)</Label>
+                            <Label className="text-[10px] uppercase font-bold text-slate-400">3Âº Lugar (%)</Label>
                             <Input 
                               type="number" 
                               value={prizeForm.thirdPlacePercent} 
@@ -2150,7 +2644,7 @@ export default function App() {
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-[10px] uppercase font-bold text-slate-400">Campeão (%)</Label>
+                            <Label className="text-[10px] uppercase font-bold text-slate-400">CampeÃ£o (%)</Label>
                             <Input 
                               type="number" 
                               value={prizeForm.championBonusPercent} 
@@ -2176,7 +2670,7 @@ export default function App() {
                   <Card className="border-none shadow-md md:col-span-2">
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                       <div>
-                        <CardTitle>Lançar Resultados</CardTitle>
+                        <CardTitle>LanÃ§ar Resultados</CardTitle>
                         <CardDescription>Atualize os placares oficiais</CardDescription>
                       </div>
                       <div className="flex gap-2">
@@ -2204,7 +2698,7 @@ export default function App() {
                             <DialogHeader>
                               <DialogTitle>{editingMatchId ? 'Editar Jogo' : 'Cadastrar Novo Jogo'}</DialogTitle>
                               <CardDescription>
-                                {editingMatchId ? 'Atualize as informações da partida' : `Adicione uma nova partida à Copa ${state.settings.year}`}
+                                {editingMatchId ? 'Atualize as informaÃ§Ãµes da partida' : `Adicione uma nova partida Ã  Copa ${state.settings.year}`}
                               </CardDescription>
                             </DialogHeader>
                             <form onSubmit={handleAddMatch} className="space-y-4 py-4">
@@ -2220,7 +2714,7 @@ export default function App() {
                                 <div className="space-y-2">
                                   <Label>Time Visitante</Label>
                                   <Input 
-                                    placeholder="Ex: México" 
+                                    placeholder="Ex: MÃ©xico" 
                                     value={newMatch.awayTeam}
                                     onChange={e => setNewMatch(prev => ({ ...prev, awayTeam: e.target.value }))}
                                   />
@@ -2247,7 +2741,7 @@ export default function App() {
                               <div className="space-y-2">
                                 <Label>Local do Jogo</Label>
                                 <Input 
-                                  placeholder="Ex: Estádio Azteca, Cidade do México" 
+                                  placeholder="Ex: EstÃ¡dio Azteca, Cidade do MÃ©xico" 
                                   value={newMatch.location}
                                   onChange={e => setNewMatch(prev => ({ ...prev, location: e.target.value }))}
                                 />
@@ -2276,7 +2770,7 @@ export default function App() {
                                 </div>
                               </div>
                               <Button type="submit" className="w-full">
-                                {editingMatchId ? 'Salvar Alterações' : 'Cadastrar Jogo'}
+                                {editingMatchId ? 'Salvar AlteraÃ§Ãµes' : 'Cadastrar Jogo'}
                               </Button>
                             </form>
                           </DialogContent>
@@ -2304,7 +2798,7 @@ export default function App() {
                               <div className="flex justify-between items-center">
                                 <div className="flex items-center gap-2">
                                   <span className="text-[10px] font-bold text-slate-400 uppercase">Grupo {match.group}</span>
-                                  <span className="text-[9px] text-slate-300">•</span>
+                                  <span className="text-[9px] text-slate-300">â€¢</span>
                                   <span className="text-[9px] text-slate-400">{formatMatchDate(match.date)}</span>
                                 </div>
                                 <div className="flex items-center gap-2">
@@ -2320,12 +2814,16 @@ export default function App() {
                                     variant="ghost" 
                                     size="icon" 
                                     className="h-6 w-6 text-slate-400 hover:text-red-600"
-                                    onClick={() => {
-                                      if (confirm('Tem certeza que deseja excluir este jogo? Todos os palpites vinculados serão perdidos.')) {
+                                    onClick={() => openConfirmationDialog({
+                                      title: 'Excluir jogo',
+                                      message: 'Tem certeza que deseja excluir este jogo? Todos os palpites vinculados serÃ£o perdidos.',
+                                      confirmLabel: 'Excluir jogo',
+                                      destructive: true,
+                                      onConfirm: () => {
                                         deleteMatch(match.id);
-                                        toast.success('Jogo excluído com sucesso!');
-                                      }
-                                    }}
+                                        toast.success('Jogo excluÃ­do com sucesso!');
+                                      },
+                                    })}
                                   >
                                     <Trash2 className="w-3 h-3" />
                                   </Button>
@@ -2405,7 +2903,7 @@ export default function App() {
       {/* Winner Modal */}
       <Dialog open={isWinnerModalOpen} onOpenChange={setIsWinnerModalOpen}>
         <DialogContent className="w-screen max-w-none h-[100dvh] sm:h-auto sm:w-[95vw] sm:max-w-[500px] border-none p-0 overflow-hidden bg-transparent shadow-none flex flex-col">
-          <motion.div 
+          <motion.div
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             className="bg-white rounded-none sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col h-[100dvh] sm:h-auto"
@@ -2417,7 +2915,7 @@ export default function App() {
                 className="absolute -top-20 -right-20 w-64 h-64 bg-yellow-400/10 rounded-full blur-3xl"
               />
               <Trophy className="w-12 sm:w-16 h-12 sm:h-16 text-yellow-400 mx-auto mb-2 sm:mb-4 relative z-10" />
-              <h2 className="text-2xl sm:text-3xl font-black text-white relative z-10 leading-tight">TEMOS UM CAMPEÃO!</h2>
+              <h2 className="text-2xl sm:text-3xl font-black text-white relative z-10 leading-tight">TEMOS UM CAMPEÃƒO!</h2>
               <p className="text-xs sm:text-sm text-slate-400 font-bold relative z-10 mt-1">A COPA DO MUNDO {state.settings.year} CHEGOU AO FIM</p>
             </div>
             
@@ -2430,17 +2928,17 @@ export default function App() {
                       <AvatarFallback className="text-3xl sm:text-4xl">{sortedUsers[0].name[0]}</AvatarFallback>
                     </Avatar>
                     <div className="absolute -bottom-2 -right-2 bg-yellow-400 text-slate-900 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center font-black shadow-lg border-4 border-white text-xs sm:text-sm">
-                      1º
+                      1Âº
                     </div>
                   </div>
                   
                   <div>
                     <h3 className="text-lg sm:text-2xl font-black text-slate-900 uppercase break-words">{sortedUsers[0].name}</h3>
-                    <p className="text-xs sm:text-sm text-slate-500 font-bold mt-1">Vencedor do Bolão com {sortedUsers[0].totalPoints} pontos!</p>
+                    <p className="text-xs sm:text-sm text-slate-500 font-bold mt-1">Vencedor do BolÃ£o com {sortedUsers[0].totalPoints} pontos!</p>
                   </div>
 
                   <div className="bg-slate-50 p-3 sm:p-6 rounded-2xl border border-slate-100 space-y-1 sm:space-y-2">
-                    <span className="text-[10px] sm:text-xs text-slate-400 uppercase font-bold">Prêmio Total Estimado</span>
+                    <span className="text-[10px] sm:text-xs text-slate-400 uppercase font-bold">PrÃªmio Total Estimado</span>
                     <h4 className="text-3xl sm:text-4xl font-black text-green-600">R$ {prizes.first.toFixed(2)}</h4>
                     <p className="text-[8px] sm:text-[10px] text-slate-400 italic">Baseado em {state.settings.prizes.firstPlacePercent}% do total arrecadado</p>
                   </div>
@@ -2451,18 +2949,51 @@ export default function App() {
                 className="w-full h-11 sm:h-14 text-sm sm:text-lg font-black bg-slate-900 hover:bg-slate-800 rounded-xl"
                 onClick={() => setIsWinnerModalOpen(false)}
               >
-                VER CLASSIFICAÇÃO COMPLETA
+                VER CLASSIFICAÃ‡ÃƒO COMPLETA
               </Button>
             </div>
           </motion.div>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isScoringRulesOpen} onOpenChange={setIsScoringRulesOpen}>
-        <DialogContent className="sm:max-w-[520px]">
+      <Dialog open={!!confirmationDialog} onOpenChange={(open) => {
+        if (!open && !isConfirmingAction) {
+          setConfirmationDialog(null);
+        }
+      }}>
+        <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>
-            <DialogTitle>Regras de Pontuação</DialogTitle>
-            <CardDescription>Entenda como os pontos do bolão são calculados.</CardDescription>
+            <div className="flex items-center gap-3">
+              <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${confirmationDialog?.destructive ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-700'}`}>
+                {confirmationDialog?.destructive ? <AlertTriangle className="w-5 h-5" /> : <Shield className="w-5 h-5" />}
+              </div>
+              <DialogTitle className="text-lg font-black">{confirmationDialog?.title}</DialogTitle>
+            </div>
+            <DialogDescription className="text-slate-600">
+              {confirmationDialog?.message}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button variant="outline" onClick={() => setConfirmationDialog(null)} disabled={isConfirmingAction}>
+              Cancelar
+            </Button>
+            <Button
+              variant={confirmationDialog?.destructive ? 'destructive' : 'default'}
+              className={confirmationDialog?.destructive ? 'bg-red-600 font-bold text-white hover:bg-red-700' : undefined}
+              onClick={handleConfirmDialogAction}
+              disabled={isConfirmingAction}
+            >
+              {isConfirmingAction ? 'Processando...' : confirmationDialog?.confirmLabel}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isScoringRulesOpen} onOpenChange={setIsScoringRulesOpen}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Regras de PontuaÃ§Ã£o</DialogTitle>
+            <CardDescription>Entenda como os pontos do bolÃ£o sÃ£o calculados.</CardDescription>
           </DialogHeader>
           <div className="space-y-3 py-2 text-sm text-slate-700">
             <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
@@ -2485,8 +3016,17 @@ export default function App() {
               <p className="font-bold text-slate-900">0 pontos</p>
               <p>Qualquer outro resultado diferente das regras acima.</p>
             </div>
+            <div className="rounded-lg border-2 border-yellow-300 bg-yellow-50 p-4 shadow-sm">
+              <div className="flex items-start gap-3">
+                <Trophy className="mt-0.5 h-5 w-5 shrink-0 text-yellow-600" />
+                <div className="space-y-1">
+                  <p className="font-black text-yellow-950">Acertar o CampeÃ£o â€“ CritÃ©rio de Desempate</p>
+                  <p>Caso dois ou mais participantes tenham acertado o campeÃ£o, a classificaÃ§Ã£o serÃ¡ definida pela maior pontuaÃ§Ã£o acumulada nos jogos ao longo do torneio.</p>
+                </div>
+              </div>
+            </div>
             <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-500">
-              Os pontos só são contabilizados quando o jogo é finalizado ou quando o bloqueio de palpites estiver ativo.
+              Os pontos sÃ³ sÃ£o contabilizados quando o jogo Ã© finalizado ou quando o bloqueio de palpites estiver ativo.
             </div>
           </div>
         </DialogContent>
@@ -2515,14 +3055,14 @@ export default function App() {
               onClick={() => setActiveTab('users')}
             >
               <Users className="w-5 h-5" />
-              <span className="text-[10px] font-bold uppercase">Usuários</span>
+              <span className="text-[10px] font-bold uppercase">UsuÃ¡rios</span>
             </button>
             <button 
               className={`flex flex-col items-center gap-1 flex-1 py-2 ${activeTab === 'admin' ? 'text-slate-900' : 'text-slate-400'}`}
               onClick={() => setActiveTab('admin')}
             >
               <Shield className="w-5 h-5" />
-              <span className="text-[10px] font-bold uppercase">Gestão</span>
+              <span className="text-[10px] font-bold uppercase">GestÃ£o</span>
             </button>
           </>
         )}

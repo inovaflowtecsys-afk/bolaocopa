@@ -30,7 +30,7 @@ if (!isSupabaseConfigured) {
 }
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const FETCH_TIMEOUT_MS = 15000;
+const FETCH_TIMEOUT_MS = 30000;
 const memoryStorage = new Map<string, string>();
 
 type SupabaseFetchDiagnostics = {

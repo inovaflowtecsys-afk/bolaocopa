@@ -14,6 +14,10 @@ if (!globalThis.WebSocket) {
 
 const app = express();
 app.use(express.json());
+app.use((_req, res, next) => {
+  res.charset = 'utf-8';
+  next();
+});
 
 const allowedOrigins = new Set([
   'https://app.bolaocopa.inovaflowtec.com.br',

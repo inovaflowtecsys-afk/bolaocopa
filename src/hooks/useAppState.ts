@@ -51,7 +51,7 @@ function mapBet(row: Record<string, any>): Bet {
 }
 
 const SUPABASE_PAGE_SIZE = 1000;
-const SUPABASE_OPERATION_TIMEOUT_MS = 20000;
+const SUPABASE_OPERATION_TIMEOUT_MS = 30000;
 
 const authLog = (step: string, details?: Record<string, unknown>) => {
   console.info(`[auth-mobile] ${step}`, details ?? {});
@@ -60,6 +60,17 @@ const authLog = (step: string, details?: Record<string, unknown>) => {
 const authErrorLog = (step: string, error: unknown, details?: Record<string, unknown>) => {
   console.error(`[auth-mobile] ${step}`, { error, ...(details ?? {}) });
 };
+
+const maskToken = (token?: string | null) => {
+  if (!token) return null;
+  return {
+    length: token.length,
+    start: token.slice(0, 8),
+    end: token.slice(-6),
+  };
+};
+
+const nowMs = () => Math.round(performance.now());
 
 const getErrorDiagnostics = (error: unknown) => {
   if (error instanceof Error) {
@@ -248,24 +259,101 @@ export function useAppState() {
     return false;
   };
 
-  const fetchUserProfile = async (userId: string) => {
-    const { data, error } = await supabase
+  const fetchUserProfile = async (userId: string, email?: string | null) => {
+    const startedAt = nowMs();
+    authLog('profile:query-by-id:start', { userId, email });
+
+    const { data, error, status, statusText } = await supabase
       .from('users')
       .select('*')
       .eq('id', userId)
-      .maybeSingle();
+      .limit(2);
+
+    const durationMs = nowMs() - startedAt;
+    authLog('profile:query-by-id:finish', {
+      userId,
+      email,
+      durationMs,
+      status,
+      statusText,
+      count: data?.length ?? 0,
+      error: error ? { message: error.message, code: error.code, details: error.details, hint: error.hint } : null,
+      fetch: getLastSupabaseFetchDiagnostics(),
+    });
 
     if (error) {
-      console.error('Erro ao buscar perfil do usuário:', error);
+      authErrorLog('profile:query-by-id:error', error, { userId, email, durationMs });
+      throw new Error(`Erro ao buscar perfil por ID: ${error.message}`, { cause: error });
+    }
+
+    if ((data?.length ?? 0) > 1) {
+      throw new Error(`Perfil duplicado para o usuario autenticado (${userId}).`);
+    }
+
+    if (data?.[0]) {
+      return mapUser(data[0]);
+    }
+
+    if (!email) {
+      authLog('profile:not-found', { userId, email, durationMs });
       return null;
     }
 
-    return data ? mapUser(data) : null;
+    const fallbackStartedAt = nowMs();
+    authLog('profile:query-by-email:start', { userId, email });
+    const fallback = await supabase
+      .from('users')
+      .select('*')
+      .ilike('email', email)
+      .limit(2);
+
+    const fallbackDurationMs = nowMs() - fallbackStartedAt;
+    authLog('profile:query-by-email:finish', {
+      userId,
+      email,
+      durationMs: fallbackDurationMs,
+      status: fallback.status,
+      statusText: fallback.statusText,
+      count: fallback.data?.length ?? 0,
+      error: fallback.error
+        ? {
+            message: fallback.error.message,
+            code: fallback.error.code,
+            details: fallback.error.details,
+            hint: fallback.error.hint,
+          }
+        : null,
+      fetch: getLastSupabaseFetchDiagnostics(),
+    });
+
+    if (fallback.error) {
+      authErrorLog('profile:query-by-email:error', fallback.error, { userId, email, durationMs: fallbackDurationMs });
+      throw new Error(`Erro ao buscar perfil por e-mail: ${fallback.error.message}`, { cause: fallback.error });
+    }
+
+    if ((fallback.data?.length ?? 0) > 1) {
+      throw new Error(`Perfil duplicado para o e-mail autenticado (${email}).`);
+    }
+
+    if (fallback.data?.[0]) {
+      const profile = mapUser(fallback.data[0]);
+      if (profile.id !== userId) {
+        authErrorLog('profile:id-mismatch', new Error('ID divergente entre auth.users e public.users'), {
+          authUserId: userId,
+          profileUserId: profile.id,
+          email,
+        });
+      }
+      return profile;
+    }
+
+    authLog('profile:not-found', { userId, email, durationMs: durationMs + fallbackDurationMs });
+    return null;
   };
 
-  const waitForUserProfile = async (userId: string, retries = 5, delayMs = 300) => {
+  const waitForUserProfile = async (userId: string, retries = 5, delayMs = 300, email?: string | null) => {
     for (let attempt = 0; attempt < retries; attempt++) {
-      const profile = await fetchUserProfile(userId);
+      const profile = await fetchUserProfile(userId, email);
       if (profile) {
         return profile;
       }
@@ -341,23 +429,24 @@ export function useAppState() {
 
   // Helper to retry supabase calls on network errors
   const withRetry = async <T>(fn: () => PromiseLike<T>, context: string, retries = 3, delayMs = 500): Promise<T | null> => {
-    for (let attempt = 0; attempt < 2; attempt++) { // só 2 tentativas
+    for (let attempt = 0; attempt < retries; attempt++) {
       try {
         return await withOperationTimeout(fn(), context);
       } catch (err) {
-        if (attempt === 1) {
+        authErrorLog('retry:error', err, { context, attempt: attempt + 1, retries });
+        if (attempt === retries - 1) {
           handleSupabaseError(err, context);
           return null;
         }
-        // espera menor
-        await new Promise(res => setTimeout(res, 100));
+        await new Promise(res => setTimeout(res, delayMs * (attempt + 1)));
       }
     }
     return null;
   };
 
-  const hydrateState = async (userId: string | null) => {
-    authLog('hydrate:start', { hasUserId: Boolean(userId), alreadyHydrating: isHydrating.current });
+  const hydrateState = async (userId: string | null, userEmail?: string | null) => {
+    const hydrateStartedAt = nowMs();
+    authLog('hydrate:start', { hasUserId: Boolean(userId), userEmail, alreadyHydrating: isHydrating.current });
 
     // Evita chamadas paralelas simultâneas
     if (isHydrating.current) {
@@ -416,7 +505,7 @@ export function useAppState() {
       let bets: Bet[] = [];
 
       if (userId) {
-        currentUser = await withOperationTimeout(fetchUserProfile(userId), 'buscar perfil do usuario');
+        currentUser = await withOperationTimeout(fetchUserProfile(userId, userEmail), 'buscar perfil do usuario');
 
         if (!currentUser) {
           await supabase.auth.signOut();
@@ -463,12 +552,14 @@ export function useAppState() {
         usersCount: users.length,
         matchesCount: resolvedMatches.length,
         betsCount: bets.length,
+        durationMs: nowMs() - hydrateStartedAt,
       });
     } catch (error) {
       authErrorLog('hydrate:error', error);
-      toast.error('Erro ao carregar dados do Supabase.');
+      const message = error instanceof Error ? error.message : 'Erro ao carregar dados do Supabase.';
+      toast.error(message);
     } finally {
-      authLog('hydrate:finish');
+      authLog('hydrate:finish', { durationMs: nowMs() - hydrateStartedAt });
       isHydrating.current = false;
       const queuedUserId = pendingHydrateUserId.current;
       if (queuedUserId !== undefined) {
@@ -530,7 +621,7 @@ export function useAppState() {
       });
 
       if (isMounted) {
-        await hydrateState(data.session?.user?.id ?? null);
+        await hydrateState(data.session?.user?.id ?? null, data.session?.user?.email ?? null);
       }
     }
 
@@ -562,7 +653,7 @@ export function useAppState() {
       }
       hydrateDebounceTimer.current = setTimeout(() => {
         if (isMounted) {
-          void hydrateState(session?.user?.id ?? null);
+          void hydrateState(session?.user?.id ?? null, session?.user?.email ?? null);
         }
       }, 300);
     });
@@ -592,6 +683,15 @@ export function useAppState() {
         hasUser: Boolean(data.user),
         hasSession: Boolean(data.session),
         userId: data.user?.id,
+        userEmail: data.user?.email,
+        session: data.session
+          ? {
+              expiresAt: data.session.expires_at,
+              tokenType: data.session.token_type,
+              accessToken: maskToken(data.session.access_token),
+              refreshToken: maskToken(data.session.refresh_token),
+            }
+          : null,
         error: error ? { message: error.message, status: error.status, code: error.code } : null,
         fetch: getLastSupabaseFetchDiagnostics(),
       });
@@ -630,23 +730,58 @@ export function useAppState() {
     }
 
     // Busca perfil do usuário na tabela users
+    const profileStartedAt = nowMs();
+    authLog('login:profile:start', {
+      userId: loginData.user.id,
+      userEmail: loginData.user.email,
+    });
     const { data: userDb, error: userDbError } = await withOperationTimeout(
-      supabase.from('users').select('*').eq('id', loginData.user.id).maybeSingle(),
+      supabase
+        .from('users')
+        .select('*')
+        .eq('id', loginData.user.id)
+        .limit(2),
       'buscar perfil do usuario',
     );
+    const profileDurationMs = nowMs() - profileStartedAt;
+    const profileRows = userDb ?? [];
     authLog('login:profile-response', {
-      hasProfile: Boolean(userDb),
+      hasProfile: profileRows.length === 1,
       userId: loginData.user.id,
+      userEmail: loginData.user.email,
+      durationMs: profileDurationMs,
+      count: profileRows.length,
       error: userDbError ? { message: userDbError.message, code: userDbError.code } : null,
       fetch: getLastSupabaseFetchDiagnostics(),
     });
-    if (userDbError || !userDb) {
+    if (userDbError) {
       authErrorLog('login:profile-error', userDbError ?? new Error('Perfil nao encontrado'), {
         userId: loginData.user.id,
+        userEmail: loginData.user.email,
+        durationMs: profileDurationMs,
         fetch: getLastSupabaseFetchDiagnostics(),
       });
-      toast.error('Usuário não encontrado no sistema. Contate o administrador.');
       await supabase.auth.signOut();
+      throw new Error(`Erro ao buscar perfil: ${userDbError.message}`, { cause: userDbError });
+    }
+
+    if (profileRows.length > 1) {
+      await supabase.auth.signOut();
+      throw new Error(`Perfil duplicado para o usuário autenticado (${loginData.user.id}).`);
+    }
+
+    let resolvedProfile = profileRows[0] ? mapUser(profileRows[0]) : null;
+
+    if (!resolvedProfile) {
+      resolvedProfile = await withOperationTimeout(
+        fetchUserProfile(loginData.user.id, loginData.user.email),
+        'buscar perfil do usuario por fallback',
+      );
+    }
+
+    if (!resolvedProfile) {
+      await supabase.auth.signOut();
+      toast.error('Perfil não encontrado. Contate o administrador para sincronizar seu cadastro.');
       return false;
     }
 
@@ -654,7 +789,7 @@ export function useAppState() {
       userId: loginData.user.id,
       expiresAt: loginData.session?.expires_at,
     });
-    const loggedUser = mapUser(userDb);
+    const loggedUser = resolvedProfile;
     setState(prev => ({
       ...prev,
       currentUser: loggedUser,
@@ -662,7 +797,7 @@ export function useAppState() {
         ? prev.users.map(user => user.id === loggedUser.id ? loggedUser : user)
         : [loggedUser, ...prev.users],
     }));
-    void withOperationTimeout(hydrateState(loginData.user.id), 'carregar dados do login')
+    void withOperationTimeout(hydrateState(loginData.user.id, loginData.user.email), 'carregar dados do login')
       .then(() => authLog('login:hydrate-background:success', { userId: loginData.user.id }))
       .catch(error => authErrorLog('login:hydrate-background:error', error, { userId: loginData.user.id }));
     authLog('login:dashboard-ready', { userId: loginData.user.id });
